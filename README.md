@@ -194,6 +194,16 @@ Default configuration:
 }
 ```
 
+## FAQ
+
+#### How can I spawn recyclers at monuments?
+
+Use the plugin [Monument Addons](https://umod.org/plugins/monument-addons).
+
+#### How can I allow players to place recyclers?
+
+There are many plugins that allow that use case, including Extended Recycler, Portable Recycler and Home Recycler.
+
 ## Developer Hooks
 
 #### OnRecycleManagerItemRecyclable
