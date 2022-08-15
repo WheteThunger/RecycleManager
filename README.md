@@ -227,3 +227,8 @@ object OnRecycleManagerRecycle(Item item, Recycler recycler)
 - Called when this plugin is about to recycle the item
 - Returning `false` will prevent this plugin from controlling how the item is recycled
 - Returning `null` will result in the default behavior
+
+## Credits
+
+- [**redBDGR**](https://umod.org/user/redBDGR) -- The original author of this plugin.
+- [**Pho3niX90**](https://umod.org/user/Pho3niX90) -- Maintainer v1.0.16 - v1.1.2.
