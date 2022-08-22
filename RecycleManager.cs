@@ -171,6 +171,11 @@ namespace Oxide.Plugins
                 return False;
             }
 
+            // If the item is not vanilla recyclable, and this plugin doesn't have an override,
+            // that probably means another plugin is going to handle recycling it.
+            if (IsVanillaRecyclable(item))
+                return null;
+
             if (item.info.Blueprint.scrapFromRecycle > 0)
             {
                 var scrapOutputMultiplier = _config.OutputMultipliers.GetOutputMultiplier(ScrapItemId);
