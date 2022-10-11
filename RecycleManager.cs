@@ -26,7 +26,7 @@ namespace Oxide.Plugins
 
         #endregion
 
-        #region Expose Hooks
+        #region Exposed Hooks
 
         private static class ExposedHooks
         {
@@ -86,6 +86,11 @@ namespace Oxide.Plugins
             }
 
             return null;
+        }
+
+        private object CanRecycle(Recycler recycler, Item item)
+        {
+            return CanBeRecycled(item, recycler);
         }
 
         private void OnRecyclerToggle(Recycler recycler, BasePlayer player)
