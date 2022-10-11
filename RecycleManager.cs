@@ -97,16 +97,20 @@ namespace Oxide.Plugins
         {
             if (!recycler.IsOn())
             {
+                // Avoid heap allocation when recycler is off.
+                var recycler2 = recycler;
+                var player2 = player;
+
                 NextTick(() =>
                 {
                     // If another plugin blocked OnRecyclerToggle, the recycler won't be on.
-                    if (!recycler.IsOn())
+                    if (!recycler2.IsOn())
                         return;
 
-                    if (RecycleSpeedWasBlocked(recycler, player))
+                    if (RecycleSpeedWasBlocked(recycler2, player2))
                         return;
 
-                    recycler.InvokeRepeating(recycler.RecycleThink, _config.RecycleSpeed.RecycleTime, _config.RecycleSpeed.RecycleTime);
+                    recycler2.InvokeRepeating(recycler2.RecycleThink, _config.RecycleSpeed.RecycleTime, _config.RecycleSpeed.RecycleTime);
                 });
             }
         }
