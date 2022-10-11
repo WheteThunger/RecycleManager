@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Oxide.Core;
+using Oxide.Core.Libraries;
 using UnityEngine;
 
 namespace Oxide.Plugins
@@ -110,7 +111,8 @@ namespace Oxide.Plugins
                     if (RecycleSpeedWasBlocked(recycler2, player2))
                         return;
 
-                    recycler2.InvokeRepeating(recycler2.RecycleThink, _config.RecycleSpeed.RecycleTime, _config.RecycleSpeed.RecycleTime);
+                    var recycleTime = _config.RecycleSpeed.GetSpeedForPlayer(player2);
+                    recycler2.InvokeRepeating(recycler2.RecycleThink, recycleTime, recycleTime);
                 });
             }
         }
@@ -448,13 +450,81 @@ namespace Oxide.Plugins
         }
 
         [JsonObject(MemberSerialization.OptIn)]
+        private class PermissionSpeedProfile
+        {
+            [JsonProperty("Permission suffix")]
+            public string PermissionSuffix;
+
+            [JsonProperty("Recycle time (seconds)")]
+            public float RecycleTime;
+
+            [JsonIgnore]
+            public string Permission { get; private set; }
+
+            public void Init(RecycleManager plugin)
+            {
+                if (!string.IsNullOrWhiteSpace(PermissionSuffix))
+                {
+                    Permission = $"{nameof(RecycleManager)}.speed.{PermissionSuffix}".ToLower();
+                    plugin.permission.RegisterPermission(Permission, plugin);
+                }
+            }
+        }
+
+        [JsonObject(MemberSerialization.OptIn)]
         private class RecycleSpeed
         {
             [JsonProperty("Enabled")]
             public bool Enabled = false;
 
+            [JsonProperty("Default recycle time (seconds)")]
+            public float DefaultRecycleTime = 5;
+
             [JsonProperty("Recycle time (seconds)")]
-            public float RecycleTime = 5;
+            private float DeprecatedRecycleType { set { DefaultRecycleTime = value; } }
+
+            [JsonProperty("Speeds requiring permission")]
+            public PermissionSpeedProfile[] PermissionSpeedProfiles = new PermissionSpeedProfile[]
+            {
+                new PermissionSpeedProfile
+                {
+                    PermissionSuffix = "fast",
+                    RecycleTime = 1,
+                },
+                new PermissionSpeedProfile
+                {
+                    PermissionSuffix = "instant",
+                    RecycleTime = 0,
+                },
+            };
+
+            [JsonIgnore]
+            private Permission _permission;
+
+            public void Init(RecycleManager plugin)
+            {
+                _permission = plugin.permission;
+
+                foreach (var speedProfile in PermissionSpeedProfiles)
+                {
+                    speedProfile.Init(plugin);
+                }
+            }
+
+            public float GetSpeedForPlayer(BasePlayer player)
+            {
+                for (var i = PermissionSpeedProfiles.Length - 1; i >= 0; i--)
+                {
+                    var speedProfile = PermissionSpeedProfiles[i];
+                    if (speedProfile.Permission != null
+                        && _permission.UserHasPermission(player.UserIDString, speedProfile.Permission))
+                    {
+                        return speedProfile.RecycleTime;
+                    }
+                }
+
+                return DefaultRecycleTime;
+            }
         }
 
         [JsonObject(MemberSerialization.OptIn)]
@@ -789,6 +859,7 @@ namespace Oxide.Plugins
 
             public void Init(RecycleManager plugin)
             {
+                RecycleSpeed.Init(plugin);
                 RestrictedInputItems.Init(plugin);
                 MaxItemsPerRecycle.Init(plugin);
                 OutputMultipliers.Init(plugin);

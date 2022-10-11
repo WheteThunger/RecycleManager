@@ -1,5 +1,6 @@
 ## Features
 
+- Allows customizing recycler speed, optionally using permissions
 - Allows preventing specific items from being recycled
 - Allows multiplying recycler output (can use 0 to disable outputting specific items)
 - Allows fully customizing recycler output
@@ -9,6 +10,15 @@
 ## Permissions
 
 - `recyclemanager.admin` -- Allows all commands.
+
+### Speed permissions
+
+The following permissions come with this plugin's **default configuration**. Granting one to a player alters the speed of recyclers they use.
+
+- `recyclemanager.speed.fast` -- Recycles in 1 second.
+- `recyclemanager.speed.instant` -- Recycles instantly.
+
+You can add more speed configurations in the plugin configuration (`Custom recycle speed` > `Speeds requiring permission`), and the plugin will automatically generate permissions of the format `recyclemanager.speed.<suffix>` when reloaded. If a player has permission to multiple presets, only the last one will apply  (based on the order in the config).
 
 ## Commands
 
@@ -23,7 +33,17 @@ Default configuration:
 {
   "Custom recycle speed": {
     "Enabled": false,
-    "Recycle time (seconds)": 5.0
+    "Default recycle time (seconds)": 5.0,
+    "Speeds requiring permission": [
+      {
+        "Permission suffix": "fast",
+        "Recycle time (seconds)": 1.0
+      },
+      {
+        "Permission suffix": "instant",
+        "Recycle time (seconds)": 0.0
+      }
+    ]
   },
   "Restricted input items": {
     "Item short names": [],
@@ -50,7 +70,10 @@ Default configuration:
 
 - `Custom recycle speed` -- This section allows you to customize recycler speed.
   - `Enabled` (`true` or `false`) -- While `true`, this plugin will override the recycling speed on all recyclers. Other plugins can use the `OnRecycleManagerSpeed` hook to override this behavior for specific recyclers or players.
-  - `Recycle time (seconds)` -- While `Enabled` is `true`, this value determines how long (in seconds) recyclers will take to produce items. Vanilla equivalent is `5.0` seconds.
+  - `Default recycle time (seconds)` -- While `Enabled` is `true`, this value determines how long (in seconds) recyclers will take to produce items. Vanilla equivalent is `5.0` seconds.
+  - `Speeds requiring permission` -- While `Enabled` is `true`, this list defines additional recycler speeds that apply only to players with the corresponding permission. Each speed configuration in this list will generate a permission of the format `recyclemanager.speed.<suffix>`. Granting that permission to a player assigns that recycler speed to them.
+    - `Permission suffix` -- The name of the speed configuration. This is used to generate a permission of the format `recyclemanager.speed.<suffix>`. For example, if you set this to `"fast"`, the plugin will generate the permission `recyclemanager.speed.fast`.
+    - `Recycle time (seconds)` -- How long (in seconds) recyclers will take to produce items, when started by a player with the corresponding permission, overriding the `Default recycle time (seconds)` option.
 - `Restricted input items` -- This section allows you to designate specific items as **not** recyclable. Other plugins can use the `OnRecycleManagerItemRecyclable` hook to override this behavior for specific items.
   - `Item short names` -- Items with these short names cannot be recycled.
     - Example: `["rope", "sewingkit"]`
