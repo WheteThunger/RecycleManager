@@ -150,11 +150,11 @@ namespace Oxide.Plugins
             if (amountToConsume <= 0)
                 return False;
 
-            item.UseItem(amountToConsume);
-
             var customIngredientList = _config.OverrideOutput.GetOverride(item);
             if (customIngredientList != null)
             {
+                item.UseItem(amountToConsume);
+
                 foreach (var ingredientInfo in customIngredientList)
                 {
                     if (ingredientInfo.ItemDefinition == null)
@@ -184,8 +184,10 @@ namespace Oxide.Plugins
 
             // If the item is not vanilla recyclable, and this plugin doesn't have an override,
             // that probably means another plugin is going to handle recycling it.
-            if (IsVanillaRecyclable(item))
+            if (!IsVanillaRecyclable(item))
                 return null;
+
+            item.UseItem(amountToConsume);
 
             if (item.info.Blueprint.scrapFromRecycle > 0)
             {
