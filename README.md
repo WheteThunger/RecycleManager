@@ -34,6 +34,7 @@ Default configuration:
   "Custom recycle speed": {
     "Enabled": false,
     "Default recycle time (seconds)": 5.0,
+    "Time multiplier by item short name": {},
     "Speeds requiring permission": [
       {
         "Permission suffix": "fast",
@@ -68,12 +69,19 @@ Default configuration:
 }
 ```
 
+#### Recycler speed
+
 - `Custom recycle speed` -- This section allows you to customize recycler speed.
   - `Enabled` (`true` or `false`) -- While `true`, this plugin will override the recycling speed on all recyclers. Other plugins can use the `OnRecycleManagerSpeed` hook to override this behavior for specific recyclers or players.
   - `Default recycle time (seconds)` -- While `Enabled` is `true`, this value determines how long (in seconds) recyclers will take to produce items. Vanilla equivalent is `5.0` seconds.
+  - `Time multiplier by item short name` -- This section allows you to speed up or slow down recycling by item type.
+    - Example: `{ "gears": 2.0, "metalpipe": 0.5 }`
   - `Speeds requiring permission` -- While `Enabled` is `true`, this list defines additional recycler speeds that apply only to players with the corresponding permission. Each speed configuration in this list will generate a permission of the format `recyclemanager.speed.<suffix>`. Granting that permission to a player assigns that recycler speed to them.
     - `Permission suffix` -- The name of the speed configuration. This is used to generate a permission of the format `recyclemanager.speed.<suffix>`. For example, if you set this to `"fast"`, the plugin will generate the permission `recyclemanager.speed.fast`.
     - `Recycle time (seconds)` -- How long (in seconds) recyclers will take to produce items, when started by a player with the corresponding permission, overriding the `Default recycle time (seconds)` option.
+
+#### Item restrictions
+
 - `Restricted input items` -- This section allows you to designate specific items as **not** recyclable. Other plugins can use the `OnRecycleManagerItemRecyclable` hook to override this behavior for specific items.
   - `Item short names` -- Items with these short names cannot be recycled.
     - Example: `["rope", "sewingkit"]`
@@ -81,6 +89,9 @@ Default configuration:
     - Example: `[1234567890, 4567891230]`
   - `Item display names (custom items)` -- Items with these custom display names cannot be recycled. The name comparison is case-insensitive.
     - Example: `["Portable Minicopter", "Ultimate Fridge"]`
+
+#### Recycle stack speed
+
 - `Max items per recycle` -- This section allows you to configure the max number of items that can be recycled at a time within a given stack of items. In vanilla, at most `10%` of the max stack size of an item can be recycled at a time. For example, if the `techparts` item has a max stack size of `50`, only `5` can be recycled at a time in vanilla.
   - `Default percent` -- This percentage applies to all items, except those that match one of the below short names, skin IDs, or display names. If you want to allow all items to be recycled while at max stack size, set this value to `100.0` and leave the other `Percent by ...` options blank.
   - `Percent by input item short name` -- This section allows you to override the percentage for specific items by item short name.
@@ -89,10 +100,18 @@ Default configuration:
     - Example: `{ "1234567890": 20.0, "0987654321": 20.0 }`
   - `Percent by input item display name (custom items)` -- This section allows you to override the percentage for specific items by item display name.
     - Example: `{ "Portable Car": 50.0, "Portable RHIB": 50.0 }`
+
+#### Output multipliers
+
 - `Output multipliers` -- This section allows you to increase or decrease the output of specific items. For example, if you set `scrap` to `2.0`, all scrap output will be double.
   - `Default multiplier` -- This multipler applies to all items, except for those overriden in `Multiplier by output item short name`.
   - `Multiplier by output item short name` -- This section allows you to override the default multiplier for items by short name.
     - Example: `{ "scrap": 2.0, "metal.fragments": 0.0 }`
+
+#### Custom output / custom recyclables
+
+**NOTICE: Recyclers will output only 50% of the outputs that you configure here, since recyclers return only 50% of what an item takes to craft.**
+
 - `Override output` -- This section allows you to override the output of specific items. This can be used to replace the output of items that are already recyclable in vanilla, as well as to allow custom items to be recycled. The output you configure here will **not** be affected by `Output multipliers`, but it will be affected by recycling "efficiency" (the percentage of the crafting cost that is output by recycling), which is 50% in vanilla (plugins sometimes change it). For example, if you want an item to output `5` scrap, you should account for recycler efficiency by configuring that item to output `10` scrap.
   - `Override output by input item short name` -- This section allows you to define what the recycler will output for specific items by item short name. The output includes the following options.
     - `Item short name` -- The short name name of the output item.
@@ -108,7 +127,21 @@ Default configuration:
 {
   "Custom recycle speed": {
     "Enabled": false,
-    "Recycle time (seconds)": 5.0
+    "Default recycle time (seconds)": 5.0,
+    "Time multiplier by item short name": { 
+      "gears": 2.0,
+      "metalpipe": 0.5
+    },
+    "Speeds requiring permission": [
+      {
+        "Permission suffix": "fast",
+        "Recycle time (seconds)": 1.0
+      },
+      {
+        "Permission suffix": "instant",
+        "Recycle time (seconds)": 0.0
+      }
+    ]
   },
   "Restricted input items": {
     "Item short names": [
@@ -179,23 +212,23 @@ Default configuration:
       "7894561230": [
         {
           "Item short name": "metal.fragments",
-          "Amount": 100,
+          "Amount": 100
         },
         {
           "Item short name": "metal.refined",
-          "Amount": 10,
-        },
+          "Amount": 10
+        }
       ]
     },
     "Override output by input item display name (custom items)": {
       "Torpedo Launcher": [
         {
           "Item short name": "metal.fragments",
-          "Amount": 500,
+          "Amount": 500
         },
         {
           "Item short name": "metal.refined",
-          "Amount": 50,
+          "Amount": 50
         }
       ]
     }

@@ -22,30 +22,10 @@ namespace Oxide.Plugins
 
         private const int ScrapItemId = -932201673;
 
-        private object True = true;
-        private object False = false;
+        private readonly object True = true;
+        private readonly object False = false;
 
-        #endregion
-
-        #region Exposed Hooks
-
-        private static class ExposedHooks
-        {
-            public static object OnRecycleManagerItemRecyclable(Item item, Recycler recycler)
-            {
-                return Interface.CallHook("OnRecycleManagerItemRecyclable", item, recycler);
-            }
-
-            public static object OnRecycleManagerSpeed(Recycler recycler, BasePlayer player)
-            {
-                return Interface.CallHook("OnRecycleManagerSpeed", recycler, player);
-            }
-
-            public static object OnRecycleManagerRecycle(Item item, Recycler recycler)
-            {
-                return Interface.CallHook("OnRecycleManagerRecycle", item, recycler);
-            }
-        }
+        private readonly RecycleComponentManager _recycleComponentManager = new RecycleComponentManager();
 
         #endregion
 
@@ -54,6 +34,7 @@ namespace Oxide.Plugins
         private void Init()
         {
             _config.Init(this);
+            _recycleComponentManager.Init(_config);
 
             permission.RegisterPermission(PermissionAdmin, this);
 
@@ -61,6 +42,11 @@ namespace Oxide.Plugins
             {
                 Unsubscribe(nameof(OnRecyclerToggle));
             }
+        }
+
+        private void Unload()
+        {
+            _recycleComponentManager.Unload();
         }
 
         // This hook is primarily used to determine whether an item can be placed into the recycler input,
@@ -94,27 +80,13 @@ namespace Oxide.Plugins
             return CanBeRecycled(item, recycler);
         }
 
-        private void OnRecyclerToggle(Recycler recycler, BasePlayer player)
+        private object OnRecyclerToggle(Recycler recycler, BasePlayer player)
         {
-            if (!recycler.IsOn())
-            {
-                // Avoid heap allocation when recycler is off.
-                var recycler2 = recycler;
-                var player2 = player;
+            if (RecycleSpeedWasBlocked(recycler, player))
+                return null;
 
-                NextTick(() =>
-                {
-                    // If another plugin blocked OnRecyclerToggle, the recycler won't be on.
-                    if (!recycler2.IsOn())
-                        return;
-
-                    if (RecycleSpeedWasBlocked(recycler2, player2))
-                        return;
-
-                    var recycleTime = _config.RecycleSpeed.GetSpeedForPlayer(player2);
-                    recycler2.InvokeRepeating(recycler2.RecycleThink, recycleTime, recycleTime);
-                });
-            }
+            _recycleComponentManager.HandleRecyclerToggled(recycler, player);
+            return False;
         }
 
         private object OnItemRecycle(Item item, Recycler recycler)
@@ -176,7 +148,7 @@ namespace Oxide.Plugins
 
                 if (outputIsFull)
                 {
-                    recycler.StopRecycling();
+                    _recycleComponentManager.StopRecycling(recycler);
                 }
 
                 return False;
@@ -231,10 +203,32 @@ namespace Oxide.Plugins
 
             if (outputIsFull || !recycler.HasRecyclable())
             {
-                recycler.StopRecycling();
+                _recycleComponentManager.StopRecycling(recycler);
             }
 
             return False;
+        }
+
+        #endregion
+
+        #region Exposed Hooks
+
+        private static class ExposedHooks
+        {
+            public static object OnRecycleManagerItemRecyclable(Item item, Recycler recycler)
+            {
+                return Interface.CallHook("OnRecycleManagerItemRecyclable", item, recycler);
+            }
+
+            public static object OnRecycleManagerSpeed(Recycler recycler, BasePlayer player)
+            {
+                return Interface.CallHook("OnRecycleManagerSpeed", recycler, player);
+            }
+
+            public static object OnRecycleManagerRecycle(Item item, Recycler recycler)
+            {
+                return Interface.CallHook("OnRecycleManagerRecycle", item, recycler);
+            }
         }
 
         #endregion
@@ -444,6 +438,183 @@ namespace Oxide.Plugins
 
         #endregion
 
+        #region Recycler Component
+
+        private class RecyclerComponent : FacepunchBehaviour
+        {
+            public static RecyclerComponent AddToRecycler(Configuration config, RecycleComponentManager recycleComponentManager, Recycler recycler)
+            {
+                var component = recycler.gameObject.AddComponent<RecyclerComponent>();
+                component._config = config;
+                component._recycleComponentManager = recycleComponentManager;
+                component._recycler = recycler;
+                component._recycleThink = recycler.RecycleThink;
+                return component;
+            }
+
+            private Configuration _config;
+            private RecycleComponentManager _recycleComponentManager;
+            private Recycler _recycler;
+            private Action _recycleThink;
+            private Action _incrementalRecycle;
+            private float _playerRecycleTime;
+
+            private RecyclerComponent()
+            {
+                _incrementalRecycle = IncrementalRecycle;
+            }
+
+            public void HandleRecyclerToggled(BasePlayer player)
+            {
+                if (_recycler.IsOn())
+                {
+                    // Turn off
+                    StopRecycling();
+                }
+                else
+                {
+                    if (!_recycler.HasRecyclable())
+                        return;
+
+                    // Turn on
+                    StartRecycling(player);
+                }
+            }
+
+            public void DestroyImmediate()
+            {
+                DestroyImmediate(this);
+            }
+
+            public void StopRecycling()
+            {
+                if (_config.RecycleSpeed.HasVariableSpeed)
+                {
+                    CancelInvoke(_incrementalRecycle);
+                }
+                else
+                {
+                    _recycler.CancelInvoke(_recycleThink);
+                }
+
+                Effect.server.Run(_recycler.stopSound.resourcePath, _recycler, 0u, Vector3.zero, Vector3.zero);
+                _recycler.SetFlag(BaseEntity.Flags.On, false);
+            }
+
+            private void IncrementalRecycle()
+            {
+                _recycler.RecycleThink();
+
+                var nextItem = GetNextItem();
+                if (nextItem == null)
+                    return;
+
+                Invoke(_incrementalRecycle, GetItemRecycleTime(nextItem));
+            }
+
+            private void StartRecycling(BasePlayer player)
+            {
+                foreach (var item in _recycler.inventory.itemList)
+                {
+                    item.CollectedForCrafting(player);
+                }
+
+                _playerRecycleTime = _config.RecycleSpeed.GetSpeedForPlayer(player);
+
+                if (_config.RecycleSpeed.HasVariableSpeed)
+                {
+                    Invoke(_incrementalRecycle, GetItemRecycleTime(GetNextItem()));
+                }
+                else
+                {
+                    _recycler.InvokeRepeating(_recycleThink, _playerRecycleTime, _playerRecycleTime);
+                }
+
+                Effect.server.Run(_recycler.startSound.resourcePath, _recycler, 0u, Vector3.zero, Vector3.zero);
+                _recycler.SetFlag(BaseEntity.Flags.On, true);
+            }
+
+            private float GetItemRecycleTime(Item item)
+            {
+                if (_playerRecycleTime == 0)
+                    return 0;
+
+                return _playerRecycleTime * _config.RecycleSpeed.GetSpeedMultiplierForItem(item);
+            }
+
+            private Item GetNextItem()
+            {
+                for (var i = 0; i < 6; i++)
+                {
+                    var item = _recycler.inventory.GetSlot(i);
+                    if (item != null)
+                        return item;
+                }
+
+                return null;
+            }
+
+            private void OnDestroy()
+            {
+                _recycleComponentManager.HandleRecyclerComponentDestroyed(_recycler);
+            }
+        }
+
+        private class RecycleComponentManager
+        {
+            private Configuration _config;
+            private readonly Dictionary<Recycler, RecyclerComponent> _recyclerComponents = new Dictionary<Recycler, RecyclerComponent>();
+
+            public void Init(Configuration config)
+            {
+                _config = config;
+            }
+
+            public void Unload()
+            {
+                foreach (var recyclerComponent in _recyclerComponents.Values.ToArray())
+                {
+                    recyclerComponent.DestroyImmediate();
+                }
+            }
+
+            public void HandleRecyclerToggled(Recycler recycler, BasePlayer player)
+            {
+                EnsureRecyclerComponent(recycler).HandleRecyclerToggled(player);
+            }
+
+            public void StopRecycling(Recycler recycler)
+            {
+                RecyclerComponent recyclerComponent;
+                if (_recyclerComponents.TryGetValue(recycler, out recyclerComponent))
+                {
+                    recyclerComponent.StopRecycling();
+                }
+                else
+                {
+                    recycler.StopRecycling();
+                }
+            }
+
+            public void HandleRecyclerComponentDestroyed(Recycler recycler)
+            {
+                _recyclerComponents.Remove(recycler);
+            }
+
+            private RecyclerComponent EnsureRecyclerComponent(Recycler recycler)
+            {
+                RecyclerComponent recyclerComponent;
+                if (!_recyclerComponents.TryGetValue(recycler, out recyclerComponent))
+                {
+                    recyclerComponent = RecyclerComponent.AddToRecycler(_config, this, recycler);
+                    _recyclerComponents[recycler] = recyclerComponent;
+                }
+                return recyclerComponent;
+            }
+        }
+
+        #endregion
+
         #region Configuration
 
         private class CaseInsensitiveDictionary<TValue> : Dictionary<string, TValue>
@@ -483,7 +654,10 @@ namespace Oxide.Plugins
             public float DefaultRecycleTime = 5;
 
             [JsonProperty("Recycle time (seconds)")]
-            private float DeprecatedRecycleType { set { DefaultRecycleTime = value; } }
+            private float DeprecatedRecycleTime { set { DefaultRecycleTime = value; } }
+
+            [JsonProperty("Time multiplier by item short name")]
+            private Dictionary<string, float> MultiplierByShortName = new Dictionary<string, float>();
 
             [JsonProperty("Speeds requiring permission")]
             public PermissionSpeedProfile[] PermissionSpeedProfiles = new PermissionSpeedProfile[]
@@ -503,6 +677,12 @@ namespace Oxide.Plugins
             [JsonIgnore]
             private Permission _permission;
 
+            [JsonIgnore]
+            private Dictionary<int, float> _multiplierByItemId = new Dictionary<int, float>();
+
+            [JsonIgnore]
+            public bool HasVariableSpeed;
+
             public void Init(RecycleManager plugin)
             {
                 _permission = plugin.permission;
@@ -510,6 +690,23 @@ namespace Oxide.Plugins
                 foreach (var speedProfile in PermissionSpeedProfiles)
                 {
                     speedProfile.Init(plugin);
+                }
+
+                foreach (var entry in MultiplierByShortName)
+                {
+                    var itemShortName = entry.Key;
+                    var itemDefinition = ItemManager.FindItemDefinition(itemShortName);
+                    if (itemDefinition == null)
+                    {
+                        plugin.LogWarning($"Invalid item short name in config: {itemShortName}");
+                        continue;
+                    }
+
+                    if (entry.Value == 1)
+                        continue;
+
+                    _multiplierByItemId[itemDefinition.itemid] = entry.Value;
+                    HasVariableSpeed = true;
                 }
             }
 
@@ -526,6 +723,15 @@ namespace Oxide.Plugins
                 }
 
                 return DefaultRecycleTime;
+            }
+
+            public float GetSpeedMultiplierForItem(Item item)
+            {
+                float multiplier;
+                if (_multiplierByItemId.TryGetValue(item.info.itemid, out multiplier))
+                    return multiplier;
+
+                return 1;
             }
         }
 
