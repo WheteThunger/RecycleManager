@@ -1305,9 +1305,9 @@ namespace Oxide.Plugins
 
         #endregion
 
-        #if ENABLE_TESTS
-
         #region Tests
+
+        #if ENABLE_TESTS
 
         private class RecycleManagerTests : BaseTestSuite
         {
@@ -1797,9 +1797,13 @@ namespace Oxide.Plugins
             }
         }
 
+        #endif
+
         #endregion
 
         #region Test Runner
+
+        #if ENABLE_TESTS
 
         [AttributeUsage(AttributeTargets.Method)]
         public class TestMethodAttribute : Attribute
@@ -2138,8 +2142,8 @@ namespace Oxide.Plugins
             }
         }
 
-        #endregion
-
         #endif
+
+        #endregion
     }
 }
