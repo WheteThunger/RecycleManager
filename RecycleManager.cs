@@ -1,4 +1,6 @@
-﻿using Newtonsoft.Json;
+﻿// #define ENABLE_TESTS
+
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Oxide.Core.Libraries.Covalence;
 using System;
@@ -7,6 +9,12 @@ using System.Linq;
 using Oxide.Core;
 using Oxide.Core.Libraries;
 using UnityEngine;
+
+#if ENABLE_TESTS
+using System.Collections;
+using System.Reflection;
+using Oxide.Core.Plugins;
+#endif
 
 namespace Oxide.Plugins
 {
@@ -27,6 +35,17 @@ namespace Oxide.Plugins
 
         private readonly RecycleComponentManager _recycleComponentManager = new RecycleComponentManager();
 
+        #if ENABLE_TESTS
+        private readonly RecycleManagerTests _testRunner;
+        #endif
+
+        public RecycleManager()
+        {
+            #if ENABLE_TESTS
+            _testRunner = new RecycleManagerTests(this);
+            #endif
+        }
+
         #endregion
 
         #region Hooks
@@ -44,8 +63,19 @@ namespace Oxide.Plugins
             }
         }
 
+        private void OnServerInitialized()
+        {
+            #if ENABLE_TESTS
+            _testRunner.Run();
+            #endif
+        }
+
         private void Unload()
         {
+            #if ENABLE_TESTS
+            _testRunner.Interrupt();
+            #endif
+
             _recycleComponentManager.Unload();
         }
 
@@ -1274,5 +1304,842 @@ namespace Oxide.Plugins
         }
 
         #endregion
+
+        #if ENABLE_TESTS
+
+        #region Tests
+
+        private class RecycleManagerTests : BaseTestSuite
+        {
+            private static void Assert(bool value, string message = null)
+            {
+                if (!value)
+                    throw new Exception($"Assertion failed: {message}");
+            }
+
+            private static void AssertItemInSlot(ItemContainer container, int slot, out Item item)
+            {
+                item = container.GetSlot(slot);
+                Assert(item != null, $"Expected item in slot {slot}, but found none.");
+            }
+
+            private static void AssertItemShortName(Item item, string shortName)
+            {
+                Assert(item.info.shortname == shortName, $"Expected item '{shortName}', but found '{item.info.shortname}'.");
+            }
+
+            private static void AssertItemSkin(Item item, ulong skin)
+            {
+                Assert(item.skin == skin, $"Expected item {item.info.shortname} to have skin '{skin}', but found '{item.skin}'.");
+            }
+
+            private static void AssertItemDisplayName(Item item, string displayName)
+            {
+                Assert(item.name == displayName, $"Expected item {item.info.shortname} to have display name '{displayName}', but found '{item.name}'.");
+            }
+
+            private static void AssertItemAmount(Item item, int expectedAmount)
+            {
+                Assert(item.amount == expectedAmount, $"Expected item '{item.info.shortname}' to have amount {expectedAmount}, but found {item.amount}.");
+            }
+
+            private static void AssertItemInContainer(ItemContainer container, int slot, string shortName, int amount)
+            {
+                Item item;
+                AssertItemInSlot(container, slot, out item);
+                AssertItemShortName(item, shortName);
+                AssertItemAmount(item, amount);
+            }
+
+            private static Item CreateItem(string shortName, int amount = 1, ulong skin = 0)
+            {
+                var item = ItemManager.CreateByName(shortName, amount, skin);
+                Assert(item != null, $"Failed to create item with short name '{shortName}' and amount '{amount}' and skin '{skin}'.");
+                return item;
+            }
+
+            private static Item AddItemToContainer(ItemContainer container, string shortName, int amount = 1, ulong skin = 0, int slot = -1)
+            {
+                var item = CreateItem(shortName, amount, skin);
+                if (!item.MoveToContainer(container, slot))
+                    throw new Exception($"Failed to move item '{shortName}' to container.");
+
+                return item;
+            }
+
+            private static void AssertSubscribed(PluginManager pluginManager, Plugin plugin, string hookName, bool subscribed = true)
+            {
+                var hookSubscribers = GetHookSubscribers(pluginManager, hookName);
+                if (hookSubscribers == null)
+                    return;
+
+                Assert(hookSubscribers.Contains(plugin) == subscribed);
+            }
+
+            private static Action SetMaxStackSize(string shortName, int amount)
+            {
+                var itemDefinition = ItemManager.FindItemDefinition(shortName);
+                Assert(itemDefinition != null, $"Failed to find item definition for short name '{shortName}'.");
+                var originalMaxStackSize = itemDefinition.stackable;
+                itemDefinition.stackable = amount;
+                return () => itemDefinition.stackable = originalMaxStackSize;
+            }
+
+            private RecycleManager _plugin;
+            private Configuration _originalConfig;
+            private Recycler _recycler;
+            private BasePlayer _player;
+
+            public RecycleManagerTests(RecycleManager plugin)
+            {
+                _plugin = plugin;
+            }
+
+            protected override void BeforeAll()
+            {
+                _originalConfig = _plugin._config;
+
+                _recycler = (Recycler)GameManager.server.CreateEntity("assets/bundled/prefabs/static/recycler_static.prefab", new Vector3(0, -1000, 0));
+                _recycler.limitNetworking = true;
+                _recycler.Spawn();
+
+                _player = (BasePlayer)GameManager.server.CreateEntity("assets/prefabs/player/player.prefab", new Vector3(0, -1000, 0));
+                _player.limitNetworking = true;
+                _player.modelState.flying = true;
+                _player.Spawn();
+            }
+
+            protected override void BeforeEach()
+            {
+                _recycler.inventory.Clear();
+                ItemManager.DoRemoves();
+                SetupPlayer(123);
+            }
+
+            private HashSet<string> GetPluginPermissions()
+            {
+                var registeredPermissionsField = typeof(Permission).GetField("registeredPermissions", BindingFlags.Instance | BindingFlags.NonPublic);
+                var permissionsMap = (Dictionary<Plugin, HashSet<string>>)registeredPermissionsField.GetValue(_plugin.permission);
+                HashSet<string> permissionList;
+                return permissionsMap.TryGetValue(_plugin, out permissionList)
+                    ? permissionList
+                    : null;
+            }
+
+            private void InitializePlugin(Configuration config)
+            {
+                _plugin._config = config;
+                GetPluginPermissions()?.Clear();
+
+                _plugin._recycleComponentManager.StopRecycling(_recycler);
+
+                // Reset recycle components since they cache the config.
+                _plugin._recycleComponentManager.Unload();
+
+                _plugin.Init();
+                _plugin.OnServerInitialized();
+            }
+
+            private void SetupPlayer(ulong userId)
+            {
+                _player.userID = userId;
+                _player.UserIDString = userId.ToString();
+
+                foreach (var perm in _plugin.permission.GetUserPermissions(_player.UserIDString).ToArray())
+                {
+                    _plugin.permission.RevokeUserPermission(_player.UserIDString, perm);
+                }
+            }
+
+            private static IList<Plugin> GetHookSubscribers(PluginManager pluginManager, string hookName)
+            {
+                var hookSubscriptionsField = typeof(PluginManager).GetField("hookSubscriptions", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (hookSubscriptionsField == null)
+                    return null;
+
+                var hookSubscriptions = hookSubscriptionsField.GetValue(pluginManager) as IDictionary<string, IList<Plugin>>;
+                if (hookSubscriptions == null)
+                    return null;
+
+                IList<Plugin> pluginList;
+                return hookSubscriptions.TryGetValue(hookName, out pluginList)
+                    ? pluginList
+                    : null;
+            }
+
+            [TestMethod("Given rope is restricted, it should not be allowed in recyclers")]
+            public void Test_ItemRestrictions_ItemShortNames()
+            {
+                InitializePlugin(new Configuration
+                {
+                    RestrictedInputItems = new RestrictedInputItems
+                    {
+                        DisallowedInputShortNames = new string[]
+                        {
+                            "rope",
+                        },
+                    },
+                });
+
+                // Tarp is not restricted, should be allowed.
+                var tarp = CreateItem("tarp");
+                if (_recycler.inventory.CanAcceptItem(tarp, 0) != ItemContainer.CanAcceptResult.CanAccept)
+                    throw new Exception($"Expected {tarp.info.shortname} to be allowed in recycler, but it was disallowed.");
+
+                var rope = CreateItem("rope");
+                if (_recycler.inventory.CanAcceptItem(rope, 0) != ItemContainer.CanAcceptResult.CannotAccept)
+                    throw new Exception($"Expected {rope.info.shortname} to be disallowed in recycler, but it was allowed.");
+            }
+
+            [TestMethod("Given recycle speed disabled, items should recycle after 5 seconds")]
+            public IEnumerator Test_RecycleSpeed_Disabled()
+            {
+                InitializePlugin(new Configuration
+                {
+                    RecycleSpeed = new RecycleSpeed
+                    {
+                        Enabled = false,
+                        DefaultRecycleTime = 2,
+                    },
+                });
+
+                AssertSubscribed(_plugin.plugins.PluginManager, _plugin, nameof(OnRecyclerToggle), subscribed: false);
+                var gears = AddItemToContainer(_recycler.inventory, "gears");
+
+                _recycler.StartRecycling();
+                yield return new WaitForSeconds(4.9f);
+                AssertItemAmount(gears, 1);
+                yield return new WaitForSeconds(0.11f);
+                AssertItemAmount(gears, 0);
+            }
+
+            [TestMethod("Given default recycle speed 0.1 seconds, items should recycle after 0.1 seconds")]
+            public IEnumerator Test_RecycleSpeed_Enabled()
+            {
+                InitializePlugin(new Configuration
+                {
+                    RecycleSpeed = new RecycleSpeed
+                    {
+                        Enabled = true,
+                        DefaultRecycleTime = 0.1f,
+                    },
+                });
+
+                var gears = AddItemToContainer(_recycler.inventory, "gears");
+                _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+                yield return null;
+                AssertItemAmount(gears, 1);
+                yield return new WaitForSeconds(0.11f);
+                AssertItemAmount(gears, 0);
+            }
+
+            [TestMethod("Given default recycle speed 3 seconds, player permission 0.1 multiplier, items should recycle after 0.3 seconds")]
+            public IEnumerator Test_RecycleSpeed_Permission()
+            {
+                InitializePlugin(new Configuration
+                {
+                    RecycleSpeed = new RecycleSpeed
+                    {
+                        Enabled = true,
+                        DefaultRecycleTime = 3,
+                        PermissionSpeedProfiles = new PermissionSpeedProfile[]
+                        {
+                            new PermissionSpeedProfile { PermissionSuffix = "fast", RecycleTimeMultiplier = 0.1f },
+                        },
+                    },
+                });
+
+                _plugin.permission.GrantUserPermission(_player.UserIDString, "recyclemanager.speed.fast", _plugin);
+
+                var gears = AddItemToContainer(_recycler.inventory, "gears");
+                _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+                yield return null;
+                AssertItemAmount(gears, 1);
+                yield return new WaitForSeconds(0.31f);
+                AssertItemAmount(gears, 0);
+            }
+
+            [TestMethod("Given default recycle speed 0.2 seconds, gears 0.1, gears should recycle after 0.1 seconds, metalpipes after 0.2 seconds")]
+            public IEnumerator Test_RecycleSpeed()
+            {
+                InitializePlugin(new Configuration
+                {
+                    RecycleSpeed = new RecycleSpeed
+                    {
+                        Enabled = true,
+                        DefaultRecycleTime = 0.2f,
+                        TimeByShortName = new Dictionary<string, float>
+                        {
+                            ["gears"] = 0.1f,
+                        },
+                    },
+                });
+
+                var gears1 = AddItemToContainer(_recycler.inventory, "gears", slot: 0);
+                var pipe1 = AddItemToContainer(_recycler.inventory, "metalpipe", slot: 1);
+                var gears2 = AddItemToContainer(_recycler.inventory, "gears", slot: 2);
+                var pipe2 = AddItemToContainer(_recycler.inventory, "metalpipe", slot: 3);
+
+                _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+
+                yield return null;
+                yield return new WaitForSeconds(0.11f);
+                AssertItemAmount(gears1, 0);
+                AssertItemAmount(pipe1, 1);
+                AssertItemAmount(gears2, 1);
+                AssertItemAmount(pipe2, 1);
+
+                yield return new WaitForSeconds(0.2f);
+                AssertItemAmount(pipe1, 0);
+                AssertItemAmount(gears2, 1);
+                AssertItemAmount(pipe2, 1);
+
+                yield return new WaitForSeconds(0.1f);
+                AssertItemAmount(gears2, 0);
+                AssertItemAmount(pipe2, 1);
+
+                yield return new WaitForSeconds(0.2f);
+                AssertItemAmount(pipe2, 0);
+            }
+
+            [TestMethod("Given gears max stack size 100, stack of 3 gears, with no override configured, should output 30 scrap and 39 metal fragments")]
+            public IEnumerator Test_RecycleStacks_NoOverride(List<Action> cleanupActions)
+            {
+                InitializePlugin(new Configuration
+                {
+                    RecycleSpeed = new RecycleSpeed
+                    {
+                        Enabled = true,
+                        DefaultRecycleTime = 0.1f,
+                    },
+                });
+
+                cleanupActions.Add(SetMaxStackSize("gears", 100));
+
+                var gears = AddItemToContainer(_recycler.inventory, "gears", 3);
+                _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+                var component = _recycler.GetComponentInParent<RecyclerComponent>();
+                yield return null;
+                yield return new WaitForSeconds(0.11f);
+                AssertItemAmount(gears, 0);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 30);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 39);
+            }
+
+            [TestMethod("Given gears max stack size 100, stack of 75 gears, default stack percent 50%, should output 500 scrap & 975 metal fragments, then should output 750 scrap & 975 metal fragments")]
+            public IEnumerator Test_RecycleStacks_DefaultPercent(List<Action> cleanupActions)
+            {
+                InitializePlugin(new Configuration
+                {
+                    RecycleSpeed = new RecycleSpeed
+                    {
+                        Enabled = true,
+                        DefaultRecycleTime = 0.1f,
+                    },
+                    MaxItemsPerRecycle = new MaxItemsPerRecycle
+                    {
+                        DefaultPercent = 50f,
+                    },
+                });
+
+                cleanupActions.Add(SetMaxStackSize("gears", 100));
+
+                var gears = AddItemToContainer(_recycler.inventory, "gears", 75);
+                _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+
+                yield return null;
+                yield return new WaitForSeconds(0.11f);
+                AssertItemAmount(gears, 25);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 500);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 650);
+
+                yield return new WaitForSeconds(0.1f);
+                AssertItemAmount(gears, 0);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 750);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 975);
+            }
+
+            [TestMethod("Given gears max stack size 100, stack of 75 gears, gears stack percent 50%, should output 500 scrap & 975 metal fragments, then should output 750 scrap & 975 metal fragments")]
+            public IEnumerator Test_RecycleStacks_ShortNamePercent(List<Action> cleanupActions)
+            {
+                InitializePlugin(new Configuration
+                {
+                    RecycleSpeed = new RecycleSpeed
+                    {
+                        Enabled = true,
+                        DefaultRecycleTime = 0.1f,
+                    },
+                    MaxItemsPerRecycle = new MaxItemsPerRecycle
+                    {
+                        DefaultPercent = 10f,
+                        PercentByShortName = new Dictionary<string, float>
+                        {
+                            ["gears"] = 50,
+                        }
+                    },
+                });
+
+                cleanupActions.Add(SetMaxStackSize("gears", 100));
+
+                var gears = AddItemToContainer(_recycler.inventory, "gears", 75);
+                _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+
+                yield return null;
+                yield return new WaitForSeconds(0.11f);
+                AssertItemAmount(gears, 25);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 500);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 650);
+
+                yield return new WaitForSeconds(0.1f);
+                AssertItemAmount(gears, 0);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 750);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 975);
+            }
+
+            [TestMethod("Given 2.0 default multiplier, 3.0 scrap output multiplier, stack of 3 gears, should output 90 scrap & 78 metal fragments")]
+            public IEnumerator Test_OutputMultipliers(List<Action> cleanupActions)
+            {
+                InitializePlugin(new Configuration
+                {
+                    RecycleSpeed = new RecycleSpeed
+                    {
+                        Enabled = true,
+                        DefaultRecycleTime = 0.1f,
+                    },
+                    OutputMultipliers = new OutputMultiplierSettings
+                    {
+                        DefaultMultiplier = 2,
+                        MultiplierByOutputShortName = new Dictionary<string, float>
+                        {
+                            ["scrap"] = 3f
+                        },
+                    },
+                });
+
+                cleanupActions.Add(SetMaxStackSize("gears", 100));
+
+                var gears = AddItemToContainer(_recycler.inventory, "gears", 3);
+                _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+
+                yield return null;
+                yield return new WaitForSeconds(0.11f);
+                AssertItemAmount(gears, 0);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 90);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 78);
+            }
+
+            [TestMethod("Given override for gears, stack of 3 gears, should output custom items")]
+            public IEnumerator Test_OverrideOutput_ByItemShortName(List<Action> cleanupActions)
+            {
+                InitializePlugin(new Configuration
+                {
+                    RecycleSpeed = new RecycleSpeed
+                    {
+                        Enabled = true,
+                        DefaultRecycleTime = 0.1f,
+                    },
+                    OutputMultipliers = new OutputMultiplierSettings
+                    {
+                        // Output multipliers should have no effect.
+                        DefaultMultiplier = 2,
+                    },
+                    OverrideOutput = new OverrideOutput
+                    {
+                        OverrideOutputByShortName = new CaseInsensitiveDictionary<IngredientInfo[]>
+                        {
+                            ["gears"] = new IngredientInfo[]
+                            {
+                                new IngredientInfo
+                                {
+                                    ShortName = "wood",
+                                    Amount = 100,
+                                    SkinId = 123456,
+                                    DisplayName = "Vood",
+                                },
+                            },
+                        },
+                    },
+                });
+
+                cleanupActions.Add(SetMaxStackSize("gears", 100));
+
+                var gears = AddItemToContainer(_recycler.inventory, "gears", 3);
+                _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+
+                yield return null;
+                yield return new WaitForSeconds(0.11f);
+                AssertItemAmount(gears, 0);
+
+                Item outputItem;
+                AssertItemInSlot(_recycler.inventory, 6, out outputItem);
+                AssertItemShortName(outputItem, "wood");
+                AssertItemSkin(outputItem, 123456);
+                AssertItemDisplayName(outputItem, "Vood");
+                AssertItemAmount(outputItem, 150);
+            }
+
+            protected override void AfterAll(bool interrupted)
+            {
+                if (_recycler != null && !_recycler.IsDestroyed)
+                {
+                    _recycler.Kill();
+                }
+
+                if (_player != null && !_player.IsDestroyed)
+                {
+                    _player.Die();
+                }
+
+                if (!interrupted)
+                {
+                    InitializePlugin(_originalConfig);
+                }
+            }
+        }
+
+        #endregion
+
+        #region Test Runner
+
+        [AttributeUsage(AttributeTargets.Method)]
+        public class TestMethodAttribute : Attribute
+        {
+            public readonly string Name;
+            public bool Skip;
+            public bool Only;
+
+            public TestMethodAttribute(string name = null)
+            {
+                Name = name;
+            }
+        }
+
+        public abstract class BaseTestSuite
+        {
+            private enum TestStatus
+            {
+                Skipped,
+                Running,
+                Success,
+                Error,
+            }
+
+            private class TestInfo
+            {
+                public string Name;
+                public bool Async;
+                public MethodInfo MethodInfo;
+                public TestMethodAttribute Attribute;
+                public TestStatus Status = TestStatus.Skipped;
+                public bool ShouldSkip;
+                public Exception Exception;
+            }
+
+            public bool IsRunning { get; private set; }
+
+            private List<TestInfo> _testInfoList = new List<TestInfo>();
+            private Coroutine _coroutine;
+
+            protected virtual void BeforeAll() {}
+            protected virtual void BeforeEach() {}
+            protected virtual void AfterEach() {}
+            protected virtual void AfterAll(bool interrupted) {}
+
+            public void Run()
+            {
+                if (IsRunning)
+                    return;
+
+                if (!TryRunBeforeAll())
+                    return;
+
+                var hasOnly = false;
+
+                foreach (var methodInfo in GetType().GetMethods())
+                {
+                    var testMethodAttribute = methodInfo.GetCustomAttributes(typeof(TestMethodAttribute), true).FirstOrDefault() as TestMethodAttribute;
+                    if (testMethodAttribute == null)
+                        continue;
+
+                    var isAsync = methodInfo.ReturnType == typeof(IEnumerator);
+                    if (!isAsync && methodInfo.ReturnType != typeof(void))
+                    {
+                        Interface.Oxide.LogError($"Disallowed return type '{methodInfo.ReturnType.FullName}' for test '{testMethodAttribute.Name}'");
+                        continue;
+                    }
+
+                    hasOnly |= testMethodAttribute.Only;
+
+                    _testInfoList.Add(new TestInfo
+                    {
+                        Name = testMethodAttribute.Name,
+                        Async = isAsync,
+                        MethodInfo = methodInfo,
+                        Attribute = testMethodAttribute,
+                        ShouldSkip = testMethodAttribute.Skip,
+                    });
+                }
+
+                if (hasOnly)
+                {
+                    foreach (var testInfo in _testInfoList)
+                    {
+                        testInfo.ShouldSkip = !testInfo.Attribute.Only;
+                    }
+                }
+
+                var syncTestList = _testInfoList.Where(testInfo => !testInfo.Async).ToArray();
+                var asyncTestList = _testInfoList.Where(testInfo => testInfo.Async).ToArray();
+
+                var canKeepRunning = RunSyncTests(syncTestList);
+                if (!canKeepRunning && asyncTestList.Length == 0)
+                {
+                    RunAfterAll();
+                    return;
+                }
+
+                _coroutine = ServerMgr.Instance.StartCoroutine(RunAsyncTests(asyncTestList));
+            }
+
+            public void Interrupt()
+            {
+                if (!IsRunning)
+                    return;
+
+                if (_coroutine != null)
+                {
+                    ServerMgr.Instance.StopCoroutine(_coroutine);
+                    Interface.Oxide.LogWarning("Interrupted tests.");
+                }
+
+                RunAfterAll(true);
+            }
+
+            private bool TryRunBeforeAll()
+            {
+                IsRunning = true;
+
+                try
+                {
+                    BeforeAll();
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Interface.Oxide.LogError($"Failed to run BeforeAll() for test suite {GetType().FullName}:\n{ex}");
+                    IsRunning = false;
+                    return false;
+                }
+            }
+
+            private bool TryRunBeforeEach()
+            {
+                try
+                {
+                    BeforeEach();
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Interface.Oxide.LogError($"Failed to run BeforeEach() for test suite {GetType().FullName}:\n{ex}");
+                    return false;
+                }
+            }
+
+            private bool TryRunAfterEach()
+            {
+                try
+                {
+                    AfterEach();
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Interface.Oxide.LogError($"Failed to run AfterEach() for test suite {GetType().FullName}:\n{ex}");
+                    return false;
+                }
+            }
+
+            private void RunAfterAll(bool interrupted = false)
+            {
+                try
+                {
+                    AfterAll(interrupted);
+                }
+                catch (Exception ex)
+                {
+                    Interface.Oxide.LogError($"Failed to run AfterAll() method for test suite {GetType().FullName}:\n{ex}");
+                }
+
+                IsRunning = false;
+
+                if (!interrupted)
+                {
+                    PrintResults();
+                }
+            }
+
+            private bool HasParameter<T>(MethodInfo methodInfo, int parameterIndex = 0)
+            {
+                return methodInfo.GetParameters().ElementAtOrDefault(parameterIndex)?.ParameterType == typeof(T);
+            }
+
+            private object[] CreateTestArguments(MethodInfo methodInfo, out List<Action> cleanupActions)
+            {
+                if (HasParameter<List<Action>>(methodInfo))
+                {
+                    cleanupActions = new List<Action>();
+                    return new object[] { cleanupActions };
+                }
+
+                cleanupActions = null;
+                return null;
+            }
+
+            private void RunCleanupActions(List<Action> cleanupActions)
+            {
+                if (cleanupActions == null)
+                    return;
+
+                foreach (var action in cleanupActions)
+                {
+                    try
+                    {
+                        action.Invoke();
+                    }
+                    catch (Exception ex)
+                    {
+                        Interface.Oxide.LogError($"Failed to run cleanup action:\n{ex}");
+                    }
+                }
+            }
+
+            private bool RunSyncTests(IEnumerable<TestInfo> syncTestList)
+            {
+                foreach (var testInfo in syncTestList)
+                {
+                    if (testInfo.ShouldSkip)
+                        continue;
+
+                    if (!TryRunBeforeEach())
+                        return false;
+
+                    List<Action> cleanupActions;
+                    var args = CreateTestArguments(testInfo.MethodInfo, out cleanupActions);
+
+                    try
+                    {
+                        testInfo.MethodInfo.Invoke(this, args);
+                    }
+                    catch (Exception ex)
+                    {
+                        testInfo.Exception = ex;
+                        testInfo.Status = TestStatus.Error;
+                    }
+
+                    testInfo.Status = TestStatus.Success;
+
+                    RunCleanupActions(cleanupActions);
+
+                    if (!TryRunAfterEach())
+                        return false;
+                }
+
+                return true;
+            }
+
+            private IEnumerator RunAsyncTests(IEnumerable<TestInfo> asyncTestList)
+            {
+                foreach (var testInfo in asyncTestList)
+                {
+                    if (testInfo.ShouldSkip)
+                        continue;
+
+                    if (!TryRunBeforeEach())
+                        break;
+
+                    List<Action> cleanupActions;
+                    var args = CreateTestArguments(testInfo.MethodInfo, out cleanupActions);
+
+                    IEnumerator enumerator;
+
+                    try
+                    {
+                        enumerator = (IEnumerator)testInfo.MethodInfo.Invoke(this, args);
+                    }
+                    catch (Exception ex)
+                    {
+                        RunCleanupActions(cleanupActions);
+                        testInfo.Exception = ex;
+                        testInfo.Status = TestStatus.Error;
+                        continue;
+                    }
+
+                    testInfo.Status = TestStatus.Running;
+
+                    while (testInfo.Status == TestStatus.Running)
+                    {
+                        // This assumes Current is null or an instance of YieldInstruction.
+                        yield return enumerator.Current;
+
+                        try
+                        {
+                            if (!enumerator.MoveNext())
+                            {
+                                testInfo.Status = TestStatus.Success;
+                                break;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            RunCleanupActions(cleanupActions);
+                            testInfo.Exception = ex;
+                            testInfo.Status = TestStatus.Error;
+                            break;
+                        }
+                    }
+
+                    RunCleanupActions(cleanupActions);
+
+                    if (!TryRunAfterEach())
+                        break;
+                }
+
+                RunAfterAll();
+            }
+
+            private void PrintResults()
+            {
+                foreach (var testInfo in _testInfoList)
+                {
+                    switch (testInfo.Status)
+                    {
+                        case TestStatus.Success:
+                            Interface.Oxide.LogWarning($"[PASSED]  {testInfo.Name}");
+                            break;
+
+                        case TestStatus.Skipped:
+                            Interface.Oxide.LogWarning($"[SKIPPED] {testInfo.Name}");
+                            break;
+
+                        case TestStatus.Error:
+                            Interface.Oxide.LogError($"[FAILED]  {testInfo.Name}:\n{testInfo.Exception}");
+                            break;
+
+                        case TestStatus.Running:
+                            Interface.Oxide.LogError($"[RUNNING] {testInfo.Name}");
+                            break;
+
+                        default:
+                            Interface.Oxide.LogError($"[{testInfo.Status}] {testInfo.Name}");
+                            break;
+                    }
+                }
+            }
+        }
+
+        #endregion
+
+        #endif
     }
 }
