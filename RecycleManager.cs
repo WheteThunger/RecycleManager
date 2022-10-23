@@ -1027,7 +1027,7 @@ namespace Oxide.Plugins
                     var ingredientInfo = new IngredientInfo
                     {
                         ShortName = blueprintIngredient.itemDef.shortname,
-                        Amount = blueprintIngredient.amount,
+                        Amount = blueprintIngredient.amount / itemDefinition.Blueprint.amountToCreate,
                     };
 
                     ingredientInfo.Init(plugin);
