@@ -165,7 +165,9 @@ namespace Oxide.Plugins
             {
                 var scrapOutputMultiplier = _config.OutputMultipliers.GetOutputMultiplier(ScrapItemId);
 
-                var scrapAmount = Mathf.CeilToInt(item.info.Blueprint.scrapFromRecycle * amountToConsume * scrapOutputMultiplier);
+                var scrapAmount = Mathf.CeilToInt(item.info.Blueprint.scrapFromRecycle * amountToConsume);
+                scrapAmount = Mathf.CeilToInt(scrapAmount * scrapOutputMultiplier);
+
                 if (item.info.stackable == 1 && item.hasCondition)
                 {
                     scrapAmount = Mathf.CeilToInt(scrapAmount * item.conditionNormalized);
@@ -180,18 +182,23 @@ namespace Oxide.Plugins
 
             foreach (var ingredient in item.info.Blueprint.ingredients)
             {
+                // Skip scrap since it's handled separately.
                 if (ingredient.itemDef.itemid == ScrapItemId)
                     continue;
 
                 var amountToCreatePerConsumedItem = ingredient.amount
-                    * _config.OutputMultipliers.GetOutputMultiplier(ingredient.itemid)
                     * recycleEfficiency
                     / item.info.Blueprint.amountToCreate;
 
                 if (amountToCreatePerConsumedItem <= 0)
                     continue;
 
-                var amountToCreate = CalculateOutputAmount(amountToConsume, amountToCreatePerConsumedItem);
+                var amountToCreate = CalculateOutputAmount(
+                    amountToConsume,
+                    amountToCreatePerConsumedItem,
+                    _config.OutputMultipliers.GetOutputMultiplier(ingredient.itemid)
+                );
+
                 if (amountToCreate <= 0)
                     continue;
 
@@ -395,8 +402,14 @@ namespace Oxide.Plugins
             return amountToCreate;
         }
 
-        private static int CalculateOutputAmount(int amountToConsume, float amountToCreatePerConsumedItem)
+        private static int CalculateOutputAmount(int amountToConsume, float amountToCreatePerConsumedItem, float outputMultiplier = 1)
         {
+            if (amountToCreatePerConsumedItem > 1 && outputMultiplier > 1)
+            {
+                // Round up to make sure vanilla fractional amounts are multiplied accurately.
+                amountToCreatePerConsumedItem = Mathf.CeilToInt(amountToCreatePerConsumedItem) * outputMultiplier;
+            }
+
             if (amountToCreatePerConsumedItem < 1f)
             {
                 if (amountToConsume <= 100)
