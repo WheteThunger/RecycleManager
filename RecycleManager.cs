@@ -457,7 +457,7 @@ namespace Oxide.Plugins
             private Recycler _recycler;
             private Action _recycleThink;
             private Action _incrementalRecycle;
-            private float _playerRecycleTime;
+            private float _playerRecycleTimeMultiplier;
 
             private RecyclerComponent()
             {
@@ -519,7 +519,7 @@ namespace Oxide.Plugins
                     item.CollectedForCrafting(player);
                 }
 
-                _playerRecycleTime = _config.RecycleSpeed.GetSpeedForPlayer(player);
+                _playerRecycleTimeMultiplier = _config.RecycleSpeed.GetTimeMultiplierForPlayer(player);
 
                 if (_config.RecycleSpeed.HasVariableSpeed)
                 {
@@ -527,7 +527,8 @@ namespace Oxide.Plugins
                 }
                 else
                 {
-                    _recycler.InvokeRepeating(_recycleThink, _playerRecycleTime, _playerRecycleTime);
+                    var recycleTime = _config.RecycleSpeed.DefaultRecycleTime * _playerRecycleTimeMultiplier;
+                    _recycler.InvokeRepeating(_recycleThink, recycleTime, recycleTime);
                 }
 
                 Effect.server.Run(_recycler.startSound.resourcePath, _recycler, 0u, Vector3.zero, Vector3.zero);
@@ -536,10 +537,10 @@ namespace Oxide.Plugins
 
             private float GetItemRecycleTime(Item item)
             {
-                if (_playerRecycleTime == 0)
+                if (_playerRecycleTimeMultiplier == 0)
                     return 0;
 
-                return _playerRecycleTime * _config.RecycleSpeed.GetSpeedMultiplierForItem(item);
+                return _playerRecycleTimeMultiplier * _config.RecycleSpeed.GetTimeForItem(item);
             }
 
             private Item GetNextItem()
@@ -629,12 +630,15 @@ namespace Oxide.Plugins
             public string PermissionSuffix;
 
             [JsonProperty("Recycle time (seconds)")]
-            public float RecycleTime;
+            private float RecycleTime { set { RecycleTimeMultiplier = value / 5f; } }
+
+            [JsonProperty("Recycle time multiplier")]
+            public float RecycleTimeMultiplier = 1;
 
             [JsonIgnore]
             public string Permission { get; private set; }
 
-            public void Init(RecycleManager plugin)
+            public void Init(RecycleManager plugin, float defaultRecycleTime)
             {
                 if (!string.IsNullOrWhiteSpace(PermissionSuffix))
                 {
@@ -648,7 +652,7 @@ namespace Oxide.Plugins
         private class RecycleSpeed
         {
             [JsonProperty("Enabled")]
-            public bool Enabled = false;
+            public bool Enabled;
 
             [JsonProperty("Default recycle time (seconds)")]
             public float DefaultRecycleTime = 5;
@@ -656,29 +660,33 @@ namespace Oxide.Plugins
             [JsonProperty("Recycle time (seconds)")]
             private float DeprecatedRecycleTime { set { DefaultRecycleTime = value; } }
 
-            [JsonProperty("Time multiplier by item short name")]
-            private Dictionary<string, float> MultiplierByShortName = new Dictionary<string, float>();
+            [JsonProperty("Recycle time by item short name (item: seconds)")]
+            public Dictionary<string, float> TimeByShortName = new Dictionary<string, float>();
 
-            [JsonProperty("Speeds requiring permission")]
+            [JsonProperty("Recycle time multiplier by permission")]
             public PermissionSpeedProfile[] PermissionSpeedProfiles = new PermissionSpeedProfile[]
             {
                 new PermissionSpeedProfile
                 {
                     PermissionSuffix = "fast",
-                    RecycleTime = 1,
+                    RecycleTimeMultiplier = 0.2f,
                 },
                 new PermissionSpeedProfile
                 {
                     PermissionSuffix = "instant",
-                    RecycleTime = 0,
+                    RecycleTimeMultiplier = 0,
                 },
             };
+
+            [JsonProperty("Speeds requiring permission")]
+            private PermissionSpeedProfile[] DeprecatedSpeedsRequiringPermisison
+            { set { PermissionSpeedProfiles = value; } }
 
             [JsonIgnore]
             private Permission _permission;
 
             [JsonIgnore]
-            private Dictionary<int, float> _multiplierByItemId = new Dictionary<int, float>();
+            private Dictionary<int, float> _timeByItemId = new Dictionary<int, float>();
 
             [JsonIgnore]
             public bool HasVariableSpeed;
@@ -689,10 +697,10 @@ namespace Oxide.Plugins
 
                 foreach (var speedProfile in PermissionSpeedProfiles)
                 {
-                    speedProfile.Init(plugin);
+                    speedProfile.Init(plugin, DefaultRecycleTime);
                 }
 
-                foreach (var entry in MultiplierByShortName)
+                foreach (var entry in TimeByShortName)
                 {
                     var itemShortName = entry.Key;
                     var itemDefinition = ItemManager.FindItemDefinition(itemShortName);
@@ -705,12 +713,12 @@ namespace Oxide.Plugins
                     if (entry.Value == 1)
                         continue;
 
-                    _multiplierByItemId[itemDefinition.itemid] = entry.Value;
+                    _timeByItemId[itemDefinition.itemid] = entry.Value;
                     HasVariableSpeed = true;
                 }
             }
 
-            public float GetSpeedForPlayer(BasePlayer player)
+            public float GetTimeMultiplierForPlayer(BasePlayer player)
             {
                 for (var i = PermissionSpeedProfiles.Length - 1; i >= 0; i--)
                 {
@@ -718,20 +726,20 @@ namespace Oxide.Plugins
                     if (speedProfile.Permission != null
                         && _permission.UserHasPermission(player.UserIDString, speedProfile.Permission))
                     {
-                        return speedProfile.RecycleTime;
+                        return speedProfile.RecycleTimeMultiplier;
                     }
                 }
 
-                return DefaultRecycleTime;
+                return 1;
             }
 
-            public float GetSpeedMultiplierForItem(Item item)
+            public float GetTimeForItem(Item item)
             {
-                float multiplier;
-                if (_multiplierByItemId.TryGetValue(item.info.itemid, out multiplier))
-                    return multiplier;
+                float time;
+                if (_timeByItemId.TryGetValue(item.info.itemid, out time))
+                    return time;
 
-                return 1;
+                return DefaultRecycleTime;
             }
         }
 
@@ -798,9 +806,6 @@ namespace Oxide.Plugins
             public Dictionary<string, float> MultiplierByOutputShortName = new Dictionary<string, float>();
 
             [JsonIgnore]
-            private Dictionary<int, float> MultiplierByInputItemId = new Dictionary<int, float>();
-
-            [JsonIgnore]
             private Dictionary<int, float> MultiplierByOutputItemId = new Dictionary<int, float>();
 
             public void Init(RecycleManager plugin)
@@ -820,15 +825,6 @@ namespace Oxide.Plugins
 
                     MultiplierByOutputItemId[itemDefinition.itemid] = entry.Value;
                 }
-            }
-
-            public float GetInputMultiplier(int itemId)
-            {
-                float multiplier;
-                if (MultiplierByInputItemId.TryGetValue(itemId, out multiplier))
-                    return multiplier;
-
-                return DefaultMultiplier;
             }
 
             public float GetOutputMultiplier(int itemId)
@@ -1251,24 +1247,6 @@ namespace Oxide.Plugins
         private void ReplyToPlayer(IPlayer player, LangEntry langEntry, params object[] args) =>
             player.Reply(GetMessage(player.Id, langEntry, args));
 
-
-        private void ChatMessage(BasePlayer player, LangEntry langEntry) =>
-            player.ChatMessage(GetMessage(player.UserIDString, langEntry));
-
-        private void ChatMessage(BasePlayer player, LangEntry langEntry, object arg1) =>
-            player.ChatMessage(GetMessage(player.UserIDString, langEntry, arg1));
-
-        private void ChatMessage(BasePlayer player, LangEntry langEntry, object arg1, object arg2) =>
-            player.ChatMessage(GetMessage(player.UserIDString, langEntry, arg1, arg2));
-
-        private void ChatMessage(BasePlayer player, LangEntry langEntry, object arg1, object arg2, object arg3) =>
-            player.ChatMessage(GetMessage(player.UserIDString, langEntry, arg1, arg2, arg3));
-
-        private void ChatMessage(BasePlayer player, LangEntry langEntry, params object[] args) =>
-            player.ChatMessage(GetMessage(player.UserIDString, langEntry, args));
-
-
-        private string GetItemNameLocalizationKey(string itemShortName) => $"Item.{itemShortName}";
 
         protected override void LoadDefaultMessages()
         {
