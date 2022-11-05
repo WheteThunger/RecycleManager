@@ -137,8 +137,9 @@ Recycle time multiplier examples:
 ```json
 {
   "Custom recycle speed": {
-    "Enabled": false,
+    "Enabled": true,
     "Default recycle time (seconds)": 5.0,
+    "Recycle time multiplier while in safe zone": 1.0,
     "Recycle time multiplier by item short name (item: multiplier)": {
       "gears": 0.6,
       "metalpipe": 0.4
