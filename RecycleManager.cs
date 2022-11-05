@@ -275,6 +275,11 @@ namespace Oxide.Plugins
             _recycleTime[0] = _config.RecycleSpeed.DefaultRecycleTime
                               * _config.RecycleSpeed.GetTimeMultiplierForPlayer(player);
 
+            if (_config.RecycleSpeed.SafeZoneTimeMultiplier != 1 && player.InSafeZone())
+            {
+                _recycleTime[0] *= _config.RecycleSpeed.SafeZoneTimeMultiplier;
+            }
+
             var hookResult = ExposedHooks.OnRecycleManagerSpeed(recycler, player, _recycleTime);
             if (hookResult is bool && !(bool)hookResult)
             {
@@ -738,6 +743,9 @@ namespace Oxide.Plugins
             [JsonProperty("Recycle time (seconds)")]
             private float DeprecatedRecycleTime { set { DefaultRecycleTime = value; } }
 
+            [JsonProperty("Recycle time multiplier while in safe zone")]
+            public float SafeZoneTimeMultiplier = 1;
+
             [JsonProperty("Recycle time multiplier by item short name (item: multiplier)")]
             public Dictionary<string, float> TimeMultiplierByShortName = new Dictionary<string, float>();
 
@@ -757,7 +765,7 @@ namespace Oxide.Plugins
             };
 
             [JsonProperty("Speeds requiring permission")]
-            private PermissionSpeedProfile[] DeprecatedSpeedsRequiringPermisison
+            private PermissionSpeedProfile[] DeprecatedSpeedsRequiringPermission
             { set { PermissionSpeedProfiles = value; } }
 
             [JsonIgnore]

@@ -1,6 +1,6 @@
 ## Features
 
-- Allows customizing recycler speed, optionally using permissions
+- Allows customizing recycler speed globally, in safe zones, per item, and according to permission
 - Allows preventing specific items from being recycled
 - Allows multiplying recycler output (can use 0 to disable outputting specific items)
 - Allows fully customizing recycler output
@@ -15,7 +15,7 @@
 
 The following permissions come with this plugin's **default configuration**. Granting one to a player alters the speed of recyclers they use.
 
-- `recyclemanager.speed.fast` -- Recycles in 1 second.
+- `recyclemanager.speed.fast` -- Recycles 5x as fast.
 - `recyclemanager.speed.instant` -- Recycles instantly.
 
 You can add more speed configurations in the plugin configuration (`Custom recycle speed` > `Speeds requiring permission`), and the plugin will automatically generate permissions of the format `recyclemanager.speed.<suffix>` when reloaded. If a player has permission to multiple presets, only the last one will apply  (based on the order in the config).
@@ -34,6 +34,7 @@ Default configuration:
   "Custom recycle speed": {
     "Enabled": false,
     "Default recycle time (seconds)": 5.0,
+    "Recycle time multiplier while in safe zone": 1.0,
     "Recycle time multiplier by item short name (item: multiplier)": {},
     "Recycle time multiplier by permission": [
       {
@@ -71,19 +72,24 @@ Default configuration:
 
 #### Recycler speed
 
-- `Custom recycle speed` -- This section allows you to customize recycler speed.
-  - `Enabled` (`true` or `false`) -- While `true`, this plugin will override the recycling speed on all recyclers. Other plugins can use the `OnRecycleManagerSpeed` hook to override this behavior for specific recyclers or players.
-  - `Default recycle time (seconds)` -- While `Enabled` is `true`, this value determines how long (in seconds) recyclers will take to process each item. Vanilla equivalent is `5.0` seconds.
+- `Custom recycle speed` -- This section allows you to optionally customize recycler speed.
+  - `Enabled` (`true` or `false`) -- While `true`, this plugin will override the recycling speed on all recyclers. While `false`, this plugin will not affect recycler speed. Default: `false`.
+    - Note: If other plugins want to cooperate with or override this behavior for specific recyclers or players, they can use the the `OnRecycleManagerSpeed` hook. 
+  - `Default recycle time (seconds)` -- This value determines how long (in seconds) recyclers will take to process each item. Vanilla equivalent is `5.0` seconds. Default: `5.0`.
+  - `Recycle time multiplier while in safe zone` -- When a player starts a recycler while in a safe zone, recycle time will be multiplied by this value.
+    - Example: `0.5` to double recycling speed in safe zones. Default: `1.0`.
   - `Recycle time multiplier by item short name (item: multiplier)` -- This section allows you to speed up or slow down recycling for specific input items, using multipliers.
     - Example: `{ "gears": 0.5, "metalpipe": 0.25 }` will make `gears` recycle in half the time (2x as fast), and `metalpipe` recycle in 1/4 the time (4x as fast).
-    - `0.5` = 2x speed
-    - `0.25` = 4x speed
-    - `0.2` = 5x speed
-    - `0.1` = 10x speed
-    - `0.0` = instant
   - `Recycle time multiplier by permission` -- This list allows you to speed up or slow down recycling for specific players according to their permission. Each entry in this list will generate a permission of the format `recyclemanager.speed.<suffix>`. Granting that permission to a player assigns the corresponding multiplier to them.
     - `Permission suffix` -- This is used to generate a permission of the format `recyclemanager.speed.<suffix>`. For example, if you set this to `"fast"`, the plugin will generate the permission `recyclemanager.speed.fast`.
-    - `Recycle time multiplier` -- The time the recycler takes to produce items will be multiplied by this value.
+    - `Recycle time multiplier` -- The time the recycler takes to process input items will be multiplied by this value.
+
+Recycle time multiplier examples:
+- `0.5` = 2x speed
+- `0.25` = 4x speed
+- `0.2` = 5x speed
+- `0.1` = 10x speed
+- `0.0` = instant
 
 #### Item restrictions
 
