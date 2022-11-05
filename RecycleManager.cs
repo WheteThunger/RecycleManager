@@ -847,7 +847,7 @@ namespace Oxide.Plugins
             [JsonIgnore]
             private Dictionary<int, float> PercentByItemId = new Dictionary<int, float>();
 
-            public void Init(RecycleManager plugin)
+            public void Init()
             {
                 foreach (var entry in PercentByShortName)
                 {
@@ -894,7 +894,7 @@ namespace Oxide.Plugins
             [JsonIgnore]
             private Dictionary<int, float> MultiplierByOutputItemId = new Dictionary<int, float>();
 
-            public void Init(RecycleManager plugin)
+            public void Init()
             {
                 foreach (var entry in MultiplierByOutputShortName)
                 {
@@ -941,7 +941,7 @@ namespace Oxide.Plugins
             [JsonIgnore]
             public ItemDefinition ItemDefinition;
 
-            public void Init(RecycleManager plugin)
+            public void Init()
             {
                 ItemDefinition = ItemManager.FindItemDefinition(ShortName);
                 if (ItemDefinition == null)
@@ -971,7 +971,7 @@ namespace Oxide.Plugins
             [JsonIgnore]
             private Dictionary<int, IngredientInfo[]> OverrideOutputByItemId = new Dictionary<int, IngredientInfo[]>();
 
-            public void Init(RecycleManager plugin)
+            public void Init()
             {
                 foreach (var entry in OverrideOutputByShortName)
                 {
@@ -989,7 +989,7 @@ namespace Oxide.Plugins
                     var ingredientInfoList = entry.Value;
                     foreach (var ingredientInfo in ingredientInfoList)
                     {
-                        ingredientInfo.Init(plugin);
+                        ingredientInfo.Init();
                     }
 
                     OverrideOutputByItemId[itemDefinition.itemid] = ingredientInfoList;
@@ -999,7 +999,7 @@ namespace Oxide.Plugins
                 {
                     foreach (var ingredientInfo in ingredientInfoList)
                     {
-                        ingredientInfo.Init(plugin);
+                        ingredientInfo.Init();
                     }
                 }
 
@@ -1007,7 +1007,7 @@ namespace Oxide.Plugins
                 {
                     foreach (var ingredientInfo in ingredientInfoList)
                     {
-                        ingredientInfo.Init(plugin);
+                        ingredientInfo.Init();
                     }
                 }
             }
@@ -1058,7 +1058,7 @@ namespace Oxide.Plugins
                         ShortName = "scrap",
                         Amount = itemDefinition.Blueprint.scrapFromRecycle,
                     };
-                    ingredientInfo.Init(plugin);
+                    ingredientInfo.Init();
                     ingredientList.Add(ingredientInfo);
                 }
 
@@ -1073,7 +1073,7 @@ namespace Oxide.Plugins
                         Amount = blueprintIngredient.amount / itemDefinition.Blueprint.amountToCreate,
                     };
 
-                    ingredientInfo.Init(plugin);
+                    ingredientInfo.Init();
                     ingredientList.Add(ingredientInfo);
                 }
 
@@ -1096,7 +1096,7 @@ namespace Oxide.Plugins
             [JsonIgnore]
             private HashSet<int> DisallowedInputItemIds = new HashSet<int>();
 
-            public void Init(RecycleManager plugin)
+            public void Init()
             {
                 foreach (var shortName in DisallowedInputShortNames)
                 {
@@ -1150,10 +1150,10 @@ namespace Oxide.Plugins
             public void Init(RecycleManager plugin)
             {
                 RecycleSpeed.Init(plugin);
-                RestrictedInputItems.Init(plugin);
-                MaxItemsPerRecycle.Init(plugin);
-                OutputMultipliers.Init(plugin);
-                OverrideOutput.Init(plugin);
+                RestrictedInputItems.Init();
+                MaxItemsPerRecycle.Init();
+                OutputMultipliers.Init();
+                OverrideOutput.Init();
             }
         }
 
