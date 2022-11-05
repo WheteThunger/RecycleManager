@@ -29,11 +29,13 @@ namespace Oxide.Plugins
         private const string PermissionAdmin = "recyclemanager.admin";
 
         private const int ScrapItemId = -932201673;
+        private const float RecycleEfficiency = 0.5f;
 
         private readonly object True = true;
         private readonly object False = false;
 
         private readonly RecycleComponentManager _recycleComponentManager = new RecycleComponentManager();
+        private readonly float[] _recycleTime = new float[1];
 
         #if ENABLE_TESTS
         private readonly RecycleManagerTests _testRunner;
@@ -53,7 +55,7 @@ namespace Oxide.Plugins
         private void Init()
         {
             _config.Init(this);
-            _recycleComponentManager.Init(_config);
+            _recycleComponentManager.Init(this);
 
             permission.RegisterPermission(PermissionAdmin, this);
 
@@ -94,7 +96,7 @@ namespace Oxide.Plugins
                     : null;
             }
 
-            if (_config.OverrideOutput.GetOverride(item) != null)
+            if (_config.OverrideOutput.GetBestOverride(item) != null)
             {
                 // Defensively return null if vanilla would *allow* recycling, to avoid hook conflicts.
                 return IsVanillaRecyclable(item) || RecyclableWasBlocked(item, recycler)
@@ -110,13 +112,9 @@ namespace Oxide.Plugins
             return CanBeRecycled(item, recycler);
         }
 
-        private object OnRecyclerToggle(Recycler recycler, BasePlayer player)
+        private void OnRecyclerToggle(Recycler recycler, BasePlayer player)
         {
-            if (RecycleSpeedWasBlocked(recycler, player))
-                return null;
-
-            _recycleComponentManager.HandleRecyclerToggled(recycler, player);
-            return False;
+            _recycleComponentManager.HandleRecyclerToggle(recycler, player);
         }
 
         private object OnItemRecycle(Item item, Recycler recycler)
@@ -124,61 +122,20 @@ namespace Oxide.Plugins
             if (RecycleItemWasBlocked(item, recycler))
                 return null;
 
-            var outputIsFull = false;
-            var recycleEfficiency = recycler.recycleEfficiency;
-
-            if (item.hasCondition)
-            {
-                recycleEfficiency = Mathf.Clamp01(recycleEfficiency * Mathf.Clamp(item.conditionNormalized * item.maxConditionNormalized, 0.1f, 1f));
-            }
-
-            var amountToConsume = 1;
-            if (item.amount > 1)
-            {
-                var consumeMultiplier = _config.MaxItemsPerRecycle.GetPercent(item) / 100f;
-                amountToConsume = Mathf.CeilToInt(Mathf.Min(item.amount, (float)item.info.stackable * consumeMultiplier));
-
-                // In case the configured multiplier is 0, ensure at least 1 item is recycled.
-                amountToConsume = Math.Max(amountToConsume, 1);
-            }
-
-            // Call standard Oxide hook for compatibility.
-            var amountOverride = Interface.CallHook("OnItemRecycleAmount", item, amountToConsume, recycler);
-            if (amountOverride is int)
-            {
-                amountToConsume = (int)amountOverride;
-            }
-
+            var amountToConsume = DetermineConsumptionAmount(recycler, item);
             if (amountToConsume <= 0)
                 return False;
 
-            var customIngredientList = _config.OverrideOutput.GetOverride(item);
+            var recycleEfficiency = DetermineRecycleEfficiency(recycler, item);
+
+            var customIngredientList = _config.OverrideOutput.GetBestOverride(item);
             if (customIngredientList != null)
             {
                 item.UseItem(amountToConsume);
 
-                foreach (var ingredientInfo in customIngredientList)
+                if (PopulateOutputWithOverride(recycler, customIngredientList, amountToConsume, recycleEfficiency))
                 {
-                    if (ingredientInfo.ItemDefinition == null)
-                        continue;
-
-                    var amountToCreatePerConsumedItem = ingredientInfo.Amount * recycleEfficiency;
-                    if (amountToCreatePerConsumedItem <= 0)
-                        continue;
-
-                    var amountToCreate = CalculateOutputAmount(amountToConsume, amountToCreatePerConsumedItem);
-                    if (amountToCreate <= 0)
-                        continue;
-
-                    if (AddItemToRecyclerOutput(recycler, ingredientInfo.ItemDefinition, amountToCreate, ingredientInfo.SkinId, ingredientInfo.DisplayName))
-                    {
-                        outputIsFull = true;
-                    }
-                }
-
-                if (outputIsFull)
-                {
-                    _recycleComponentManager.StopRecycling(recycler);
+                    recycler.StopRecycling();
                 }
 
                 return False;
@@ -191,56 +148,10 @@ namespace Oxide.Plugins
 
             item.UseItem(amountToConsume);
 
-            if (item.info.Blueprint.scrapFromRecycle > 0)
-            {
-                var scrapOutputMultiplier = _config.OutputMultipliers.GetOutputMultiplier(ScrapItemId);
-
-                var scrapAmount = Mathf.CeilToInt(item.info.Blueprint.scrapFromRecycle * amountToConsume);
-                scrapAmount = Mathf.CeilToInt(scrapAmount * scrapOutputMultiplier);
-
-                if (item.info.stackable == 1 && item.hasCondition)
-                {
-                    scrapAmount = Mathf.CeilToInt(scrapAmount * item.conditionNormalized);
-                }
-
-                if (scrapAmount >= 1)
-                {
-                    var scrapItem = ItemManager.CreateByItemID(ScrapItemId, scrapAmount);
-                    recycler.MoveItemToOutput(scrapItem);
-                }
-            }
-
-            foreach (var ingredient in item.info.Blueprint.ingredients)
-            {
-                // Skip scrap since it's handled separately.
-                if (ingredient.itemDef.itemid == ScrapItemId)
-                    continue;
-
-                var amountToCreatePerConsumedItem = ingredient.amount
-                    * recycleEfficiency
-                    / item.info.Blueprint.amountToCreate;
-
-                if (amountToCreatePerConsumedItem <= 0)
-                    continue;
-
-                var amountToCreate = CalculateOutputAmount(
-                    amountToConsume,
-                    amountToCreatePerConsumedItem,
-                    _config.OutputMultipliers.GetOutputMultiplier(ingredient.itemid)
-                );
-
-                if (amountToCreate <= 0)
-                    continue;
-
-                if (AddItemToRecyclerOutput(recycler, ingredient.itemDef, amountToCreate))
-                {
-                    outputIsFull = true;
-                }
-            }
-
+            var outputIsFull = PopulateOutputVanilla(_config, recycler, item, amountToConsume, recycleEfficiency);
             if (outputIsFull || !recycler.HasRecyclable())
             {
-                _recycleComponentManager.StopRecycling(recycler);
+                recycler.StopRecycling();
             }
 
             return False;
@@ -257,9 +168,9 @@ namespace Oxide.Plugins
                 return Interface.CallHook("OnRecycleManagerItemRecyclable", item, recycler);
             }
 
-            public static object OnRecycleManagerSpeed(Recycler recycler, BasePlayer player)
+            public static object OnRecycleManagerSpeed(Recycler recycler, BasePlayer player, float[] recycleTime)
             {
-                return Interface.CallHook("OnRecycleManagerSpeed", recycler, player);
+                return Interface.CallHook("OnRecycleManagerSpeed", recycler, player, recycleTime);
             }
 
             public static object OnRecycleManagerRecycle(Item item, Recycler recycler)
@@ -359,9 +270,140 @@ namespace Oxide.Plugins
             return false;
         }
 
+        private bool TryDetermineRecycleTime(Recycler recycler, BasePlayer player, out float recycleTime)
+        {
+            _recycleTime[0] = _config.RecycleSpeed.DefaultRecycleTime
+                              * _config.RecycleSpeed.GetTimeMultiplierForPlayer(player);
+
+            var hookResult = ExposedHooks.OnRecycleManagerSpeed(recycler, player, _recycleTime);
+            if (hookResult is bool && !(bool)hookResult)
+            {
+                recycleTime = 0;
+                return false;
+            }
+
+            recycleTime = Math.Max(0, _recycleTime[0]);
+            return true;
+        }
+
+        private float DetermineRecycleEfficiency(Recycler recycler, Item item)
+        {
+            return item.hasCondition
+                ? Mathf.Clamp01(recycler.recycleEfficiency * Mathf.Clamp(item.conditionNormalized * item.maxConditionNormalized, 0.1f, 1f))
+                : recycler.recycleEfficiency;
+        }
+
+        private int DetermineConsumptionAmount(Recycler recycler, Item item)
+        {
+            var amountToConsume = 1;
+
+            if (item.amount > 1)
+            {
+                var consumeMultiplier = _config.MaxItemsPerRecycle.GetPercent(item) / 100f;
+                amountToConsume = Mathf.CeilToInt(Mathf.Min(item.amount, (float)item.info.stackable * consumeMultiplier));
+
+                // In case the configured multiplier is 0, ensure at least 1 item is recycled.
+                amountToConsume = Math.Max(amountToConsume, 1);
+            }
+
+            // Call standard Oxide hook for compatibility.
+            var amountOverride = Interface.CallHook("OnItemRecycleAmount", item, amountToConsume, recycler);
+            if (amountOverride is int)
+            {
+                return (int)amountOverride;
+            }
+
+            return amountToConsume;
+        }
+
+        private bool PopulateOutputWithOverride(Recycler recycler, IngredientInfo[] customIngredientList, int amountToConsume, float recycleEfficiency = RecycleEfficiency, bool alwaysRoundUp = false)
+        {
+            var outputIsFull = false;
+
+            foreach (var ingredientInfo in customIngredientList)
+            {
+                if (ingredientInfo.ItemDefinition == null)
+                    continue;
+
+                var amountToCreatePerConsumedItem = ingredientInfo.Amount * recycleEfficiency;
+                if (amountToCreatePerConsumedItem <= 0)
+                    continue;
+
+                var amountToCreate = CalculateOutputAmount(amountToConsume, amountToCreatePerConsumedItem, alwaysRoundUp: alwaysRoundUp);
+                if (amountToCreate <= 0)
+                    continue;
+
+                if (AddItemToRecyclerOutput(recycler, ingredientInfo.ItemDefinition, amountToCreate, ingredientInfo.SkinId, ingredientInfo.DisplayName))
+                {
+                    outputIsFull = true;
+                }
+            }
+
+            return outputIsFull;
+        }
+
+        private static bool PopulateOutputVanilla(Configuration config, Recycler recycler, Item item, int amountToConsume, float recycleEfficiency = RecycleEfficiency, bool alwaysRoundUp = false)
+        {
+            var outputIsFull = false;
+
+            if (item.info.Blueprint.scrapFromRecycle > 0)
+            {
+                var scrapOutputMultiplier = config.OutputMultipliers.GetOutputMultiplier(ScrapItemId);
+
+                var scrapAmount = Mathf.CeilToInt(item.info.Blueprint.scrapFromRecycle * amountToConsume);
+                scrapAmount = Mathf.CeilToInt(scrapAmount * scrapOutputMultiplier);
+
+                if (!alwaysRoundUp && item.info.stackable == 1 && item.hasCondition)
+                {
+                    scrapAmount = Mathf.CeilToInt(scrapAmount * item.conditionNormalized);
+                }
+
+                if (scrapAmount >= 1)
+                {
+                    var scrapItem = ItemManager.CreateByItemID(ScrapItemId, scrapAmount);
+                    recycler.MoveItemToOutput(scrapItem);
+                }
+            }
+
+            foreach (var ingredient in item.info.Blueprint.ingredients)
+            {
+                // Skip scrap since it's handled separately.
+                if (ingredient.itemDef.itemid == ScrapItemId)
+                    continue;
+
+                var amountToCreatePerConsumedItem = ingredient.amount
+                    * recycleEfficiency
+                    / item.info.Blueprint.amountToCreate;
+
+                if (amountToCreatePerConsumedItem <= 0)
+                    continue;
+
+                var amountToCreate = CalculateOutputAmount(
+                    amountToConsume,
+                    amountToCreatePerConsumedItem,
+                    config.OutputMultipliers.GetOutputMultiplier(ingredient.itemid),
+                    alwaysRoundUp: alwaysRoundUp
+                );
+
+                if (amountToCreate <= 0)
+                    continue;
+
+                if (AddItemToRecyclerOutput(recycler, ingredient.itemDef, amountToCreate))
+                {
+                    outputIsFull = true;
+                }
+            }
+
+            return outputIsFull;
+        }
+
         #endregion
 
         #region Helper Methods - Static
+
+        public static void LogInfo(string message) => Interface.Oxide.LogInfo($"[Recycle Manager] {message}");
+        public static void LogError(string message) => Interface.Oxide.LogError($"[Recycle Manager] {message}");
+        public static void LogWarning(string message) => Interface.Oxide.LogWarning($"[Recycle Manager] {message}");
 
         private static bool IsVanillaRecyclable(Item item)
         {
@@ -371,12 +413,6 @@ namespace Oxide.Plugins
         private static bool RecyclableWasBlocked(Item item, Recycler recycler)
         {
             var hookResult = ExposedHooks.OnRecycleManagerItemRecyclable(item, recycler);
-            return hookResult is bool && (bool)hookResult == false;
-        }
-
-        private static bool RecycleSpeedWasBlocked(Recycler recycler, BasePlayer player)
-        {
-            var hookResult = ExposedHooks.OnRecycleManagerSpeed(recycler, player);
             return hookResult is bool && (bool)hookResult == false;
         }
 
@@ -432,7 +468,7 @@ namespace Oxide.Plugins
             return amountToCreate;
         }
 
-        private static int CalculateOutputAmount(int amountToConsume, float amountToCreatePerConsumedItem, float outputMultiplier = 1)
+        private static int CalculateOutputAmount(int amountToConsume, float amountToCreatePerConsumedItem, float outputMultiplier = 1, bool alwaysRoundUp = false)
         {
             if (amountToCreatePerConsumedItem > 1 && outputMultiplier > 1)
             {
@@ -440,7 +476,7 @@ namespace Oxide.Plugins
                 amountToCreatePerConsumedItem = Mathf.CeilToInt(amountToCreatePerConsumedItem) * outputMultiplier;
             }
 
-            if (amountToCreatePerConsumedItem < 1f)
+            if (!alwaysRoundUp && amountToCreatePerConsumedItem < 1f)
             {
                 if (amountToConsume <= 100)
                 {
@@ -485,43 +521,29 @@ namespace Oxide.Plugins
 
         private class RecyclerComponent : FacepunchBehaviour
         {
-            public static RecyclerComponent AddToRecycler(Configuration config, RecycleComponentManager recycleComponentManager, Recycler recycler)
+            public static RecyclerComponent AddToRecycler(RecycleManager plugin, RecycleComponentManager recycleComponentManager, Recycler recycler)
             {
                 var component = recycler.gameObject.AddComponent<RecyclerComponent>();
-                component._config = config;
+                component._plugin = plugin;
                 component._recycleComponentManager = recycleComponentManager;
                 component._recycler = recycler;
-                component._recycleThink = recycler.RecycleThink;
+                component._vanillaRecycleThink = recycler.RecycleThink;
                 return component;
             }
 
-            private Configuration _config;
+            private RecycleManager _plugin;
             private RecycleComponentManager _recycleComponentManager;
             private Recycler _recycler;
-            private Action _recycleThink;
-            private Action _incrementalRecycle;
-            private float _playerRecycleTimeMultiplier;
+            private Action _vanillaRecycleThink;
+            private Action _customRecycleThink;
+            private float _recycleTime;
+
+            private Configuration _config => _plugin._config;
+            private bool _enableIncrementalRecycling => _config.RecycleSpeed.EnableIncrementalRecycling;
 
             private RecyclerComponent()
             {
-                _incrementalRecycle = IncrementalRecycle;
-            }
-
-            public void HandleRecyclerToggled(BasePlayer player)
-            {
-                if (_recycler.IsOn())
-                {
-                    // Turn off
-                    StopRecycling();
-                }
-                else
-                {
-                    if (!_recycler.HasRecyclable())
-                        return;
-
-                    // Turn on
-                    StartRecycling(player);
-                }
+                _customRecycleThink = CustomRecycleThink;
             }
 
             public void DestroyImmediate()
@@ -529,61 +551,82 @@ namespace Oxide.Plugins
                 DestroyImmediate(this);
             }
 
-            public void StopRecycling()
+            public void HandleRecyclerToggle(BasePlayer player)
             {
-                if (_config.RecycleSpeed.HasVariableSpeed)
+                // Delay for the following reasons.
+                //   1. Allow other plugins to block toggle the recycler.
+                //   2. Override other plugins after they start the recycler with custom speed.
+                // If another plugin wants to alter the speed, they should use the hook that will be called on a delay.
+                Invoke(() => HandleRecyclerToggleDelayed(player), 0);
+            }
+
+            private void HandleRecyclerToggleDelayed(BasePlayer player)
+            {
+                if (_recycler.IsOn())
                 {
-                    CancelInvoke(_incrementalRecycle);
+                    // Allow other plugins to block this, or to modify recycle time.
+                    if (!_plugin.TryDetermineRecycleTime(_recycler, player, out _recycleTime))
+                        return;
+
+                    // Cancel the vanilla recycle invoke, in case another plugin started it.
+                    // The custom recycle think method will also cancel it, since it may be started on a delay.
+                    _recycler.CancelInvoke(_vanillaRecycleThink);
+
+                    if (_enableIncrementalRecycling)
+                    {
+                        Invoke(_customRecycleThink, GetItemRecycleTime(GetNextItem()));
+                    }
+                    else
+                    {
+                        InvokeRepeating(_customRecycleThink, _recycleTime, _recycleTime);
+                    }
                 }
                 else
                 {
-                    _recycler.CancelInvoke(_recycleThink);
+                    // The recycler is off, but vanilla doesn't know how to turn off custom recycling.
+                    CancelInvoke(_customRecycleThink);
                 }
-
-                Effect.server.Run(_recycler.stopSound.resourcePath, _recycler, 0u, Vector3.zero, Vector3.zero);
-                _recycler.SetFlag(BaseEntity.Flags.On, false);
             }
 
-            private void IncrementalRecycle()
+            private void CustomRecycleThink()
             {
+                if (!_recycler.IsOn())
+                {
+                    // Vanilla or another plugin turned off the recycler, so don't process the next item.
+                    if (!_enableIncrementalRecycling)
+                    {
+                        // Incremental recycling is disabled, so we must cancel the repeating custom invoke.
+                        CancelInvoke(_customRecycleThink);
+                    }
+                    return;
+                }
+
+                // Stop the vanilla invokes if another plugin started them.
+                // Necessary because some plugins will start the vanilla invokes on a delay to change recycler speed.
+                // If another plugin wants to change recycler speed, they should use the hook designed for that.
+                if (_recycler.IsInvoking(_vanillaRecycleThink))
+                {
+                    _recycler.CancelInvoke(_vanillaRecycleThink);
+                }
+
                 _recycler.RecycleThink();
 
-                var nextItem = GetNextItem();
-                if (nextItem == null)
-                    return;
-
-                Invoke(_incrementalRecycle, GetItemRecycleTime(nextItem));
-            }
-
-            private void StartRecycling(BasePlayer player)
-            {
-                foreach (var item in _recycler.inventory.itemList)
+                if (_enableIncrementalRecycling)
                 {
-                    item.CollectedForCrafting(player);
+                    var nextItem = GetNextItem();
+                    if (nextItem != null)
+                    {
+                        Invoke(_customRecycleThink, GetItemRecycleTime(nextItem));
+                    }
                 }
-
-                _playerRecycleTimeMultiplier = _config.RecycleSpeed.GetTimeMultiplierForPlayer(player);
-
-                if (_config.RecycleSpeed.HasVariableSpeed)
-                {
-                    Invoke(_incrementalRecycle, GetItemRecycleTime(GetNextItem()));
-                }
-                else
-                {
-                    var recycleTime = _config.RecycleSpeed.DefaultRecycleTime * _playerRecycleTimeMultiplier;
-                    _recycler.InvokeRepeating(_recycleThink, recycleTime, recycleTime);
-                }
-
-                Effect.server.Run(_recycler.startSound.resourcePath, _recycler, 0u, Vector3.zero, Vector3.zero);
-                _recycler.SetFlag(BaseEntity.Flags.On, true);
             }
 
             private float GetItemRecycleTime(Item item)
             {
-                if (_playerRecycleTimeMultiplier == 0)
-                    return 0;
+                if (_recycleTime == 0)
+                    return _recycleTime;
 
-                return _playerRecycleTimeMultiplier * _config.RecycleSpeed.GetTimeForItem(item);
+                return _recycleTime * _config.RecycleSpeed.GetTimeMultiplierForItem(item);
             }
 
             private Item GetNextItem()
@@ -606,12 +649,12 @@ namespace Oxide.Plugins
 
         private class RecycleComponentManager
         {
-            private Configuration _config;
+            private RecycleManager _plugin;
             private readonly Dictionary<Recycler, RecyclerComponent> _recyclerComponents = new Dictionary<Recycler, RecyclerComponent>();
 
-            public void Init(Configuration config)
+            public void Init(RecycleManager plugin)
             {
-                _config = config;
+                _plugin = plugin;
             }
 
             public void Unload()
@@ -622,22 +665,9 @@ namespace Oxide.Plugins
                 }
             }
 
-            public void HandleRecyclerToggled(Recycler recycler, BasePlayer player)
+            public void HandleRecyclerToggle(Recycler recycler, BasePlayer player)
             {
-                EnsureRecyclerComponent(recycler).HandleRecyclerToggled(player);
-            }
-
-            public void StopRecycling(Recycler recycler)
-            {
-                RecyclerComponent recyclerComponent;
-                if (_recyclerComponents.TryGetValue(recycler, out recyclerComponent))
-                {
-                    recyclerComponent.StopRecycling();
-                }
-                else
-                {
-                    recycler.StopRecycling();
-                }
+                EnsureRecyclerComponent(recycler).HandleRecyclerToggle(player);
             }
 
             public void HandleRecyclerComponentDestroyed(Recycler recycler)
@@ -650,7 +680,7 @@ namespace Oxide.Plugins
                 RecyclerComponent recyclerComponent;
                 if (!_recyclerComponents.TryGetValue(recycler, out recyclerComponent))
                 {
-                    recyclerComponent = RecyclerComponent.AddToRecycler(_config, this, recycler);
+                    recyclerComponent = RecyclerComponent.AddToRecycler(_plugin, this, recycler);
                     _recyclerComponents[recycler] = recyclerComponent;
                 }
                 return recyclerComponent;
@@ -666,6 +696,11 @@ namespace Oxide.Plugins
             public CaseInsensitiveDictionary() : base(StringComparer.OrdinalIgnoreCase) {}
         }
 
+        private class CaseInsensitiveHashSet : HashSet<string>
+        {
+            public CaseInsensitiveHashSet() : base(StringComparer.OrdinalIgnoreCase) {}
+        }
+
         [JsonObject(MemberSerialization.OptIn)]
         private class PermissionSpeedProfile
         {
@@ -673,15 +708,15 @@ namespace Oxide.Plugins
             public string PermissionSuffix;
 
             [JsonProperty("Recycle time (seconds)")]
-            private float RecycleTime { set { RecycleTimeMultiplier = value / 5f; } }
+            private float RecycleTime { set { TimeMultiplier = value / 5f; } }
 
             [JsonProperty("Recycle time multiplier")]
-            public float RecycleTimeMultiplier = 1;
+            public float TimeMultiplier = 1;
 
             [JsonIgnore]
             public string Permission { get; private set; }
 
-            public void Init(RecycleManager plugin, float defaultRecycleTime)
+            public void Init(RecycleManager plugin)
             {
                 if (!string.IsNullOrWhiteSpace(PermissionSuffix))
                 {
@@ -703,8 +738,8 @@ namespace Oxide.Plugins
             [JsonProperty("Recycle time (seconds)")]
             private float DeprecatedRecycleTime { set { DefaultRecycleTime = value; } }
 
-            [JsonProperty("Recycle time by item short name (item: seconds)")]
-            public Dictionary<string, float> TimeByShortName = new Dictionary<string, float>();
+            [JsonProperty("Recycle time multiplier by item short name (item: multiplier)")]
+            public Dictionary<string, float> TimeMultiplierByShortName = new Dictionary<string, float>();
 
             [JsonProperty("Recycle time multiplier by permission")]
             public PermissionSpeedProfile[] PermissionSpeedProfiles = new PermissionSpeedProfile[]
@@ -712,12 +747,12 @@ namespace Oxide.Plugins
                 new PermissionSpeedProfile
                 {
                     PermissionSuffix = "fast",
-                    RecycleTimeMultiplier = 0.2f,
+                    TimeMultiplier = 0.2f,
                 },
                 new PermissionSpeedProfile
                 {
                     PermissionSuffix = "instant",
-                    RecycleTimeMultiplier = 0,
+                    TimeMultiplier = 0,
                 },
             };
 
@@ -729,10 +764,10 @@ namespace Oxide.Plugins
             private Permission _permission;
 
             [JsonIgnore]
-            private Dictionary<int, float> _timeByItemId = new Dictionary<int, float>();
+            private Dictionary<int, float> _timeMultiplierByItemId = new Dictionary<int, float>();
 
             [JsonIgnore]
-            public bool HasVariableSpeed;
+            public bool EnableIncrementalRecycling;
 
             public void Init(RecycleManager plugin)
             {
@@ -740,24 +775,24 @@ namespace Oxide.Plugins
 
                 foreach (var speedProfile in PermissionSpeedProfiles)
                 {
-                    speedProfile.Init(plugin, DefaultRecycleTime);
+                    speedProfile.Init(plugin);
                 }
 
-                foreach (var entry in TimeByShortName)
+                foreach (var entry in TimeMultiplierByShortName)
                 {
                     var itemShortName = entry.Key;
                     var itemDefinition = ItemManager.FindItemDefinition(itemShortName);
                     if (itemDefinition == null)
                     {
-                        plugin.LogWarning($"Invalid item short name in config: {itemShortName}");
+                        LogWarning($"Invalid item short name in config: {itemShortName}");
                         continue;
                     }
 
                     if (entry.Value == 1)
                         continue;
 
-                    _timeByItemId[itemDefinition.itemid] = entry.Value;
-                    HasVariableSpeed = true;
+                    _timeMultiplierByItemId[itemDefinition.itemid] = entry.Value;
+                    EnableIncrementalRecycling = true;
                 }
             }
 
@@ -769,20 +804,20 @@ namespace Oxide.Plugins
                     if (speedProfile.Permission != null
                         && _permission.UserHasPermission(player.UserIDString, speedProfile.Permission))
                     {
-                        return speedProfile.RecycleTimeMultiplier;
+                        return speedProfile.TimeMultiplier;
                     }
                 }
 
                 return 1;
             }
 
-            public float GetTimeForItem(Item item)
+            public float GetTimeMultiplierForItem(Item item)
             {
                 float time;
-                if (_timeByItemId.TryGetValue(item.info.itemid, out time))
+                if (_timeMultiplierByItemId.TryGetValue(item.info.itemid, out time))
                     return time;
 
-                return DefaultRecycleTime;
+                return 1;
             }
         }
 
@@ -815,7 +850,7 @@ namespace Oxide.Plugins
                     var itemDefinition = ItemManager.FindItemDefinition(shortName);
                     if (itemDefinition == null)
                     {
-                        plugin.LogWarning($"Invalid item short name in config: {shortName}");
+                        LogWarning($"Invalid item short name in config: {shortName}");
                         continue;
                     }
 
@@ -862,7 +897,7 @@ namespace Oxide.Plugins
                     var itemDefinition = ItemManager.FindItemDefinition(shortName);
                     if (itemDefinition == null)
                     {
-                        plugin.LogWarning($"Invalid item short name in config: {shortName}");
+                        LogWarning($"Invalid item short name in config: {shortName}");
                         continue;
                     }
 
@@ -903,7 +938,7 @@ namespace Oxide.Plugins
                 ItemDefinition = ItemManager.FindItemDefinition(ShortName);
                 if (ItemDefinition == null)
                 {
-                    plugin.LogWarning($"Invalid item short name in config: {ShortName}");
+                    LogWarning($"Invalid item short name in config: {ShortName}");
                 }
 
                 if (Amount < 0)
@@ -939,7 +974,7 @@ namespace Oxide.Plugins
                     var itemDefinition = ItemManager.FindItemDefinition(shortName);
                     if (itemDefinition == null)
                     {
-                        plugin.LogWarning($"Invalid item short name in config: {shortName}");
+                        LogWarning($"Invalid item short name in config: {shortName}");
                         continue;
                     }
 
@@ -969,7 +1004,7 @@ namespace Oxide.Plugins
                 }
             }
 
-            public IngredientInfo[] GetOverride(Item item)
+            public IngredientInfo[] GetBestOverride(Item item)
             {
                 IngredientInfo[] ingredientInfoList;
                 if (!string.IsNullOrWhiteSpace(item.name) && OverrideOutputByDisplayName.TryGetValue(item.name, out ingredientInfoList))
@@ -1042,13 +1077,13 @@ namespace Oxide.Plugins
         private class RestrictedInputItems
         {
             [JsonProperty("Item short names")]
-            public string[] DisallowedInputShortNames = new string[0];
+            public CaseInsensitiveHashSet DisallowedInputShortNames = new CaseInsensitiveHashSet();
 
             [JsonProperty("Item skin IDs")]
-            public ulong[] DisallowedInputSkinIds = new ulong[0];
+            public HashSet<ulong> DisallowedInputSkinIds = new HashSet<ulong>();
 
             [JsonProperty("Item display names (custom items)")]
-            public string[] DisallowedInputDisplayNames = new string[0];
+            public CaseInsensitiveHashSet DisallowedInputDisplayNames = new CaseInsensitiveHashSet();
 
             [JsonIgnore]
             private HashSet<int> DisallowedInputItemIds = new HashSet<int>();
@@ -1063,7 +1098,7 @@ namespace Oxide.Plugins
                     var itemDefinition = ItemManager.FindItemDefinition(shortName);
                     if (itemDefinition == null)
                     {
-                        plugin.LogWarning($"Invalid item short name in config: {shortName}");
+                        LogWarning($"Invalid item short name in config: {shortName}");
                         continue;
                     }
 
@@ -1431,7 +1466,7 @@ namespace Oxide.Plugins
                 _plugin._config = config;
                 GetPluginPermissions()?.Clear();
 
-                _plugin._recycleComponentManager.StopRecycling(_recycler);
+                _recycler.StopRecycling();
 
                 // Reset recycle components since they cache the config.
                 _plugin._recycleComponentManager.Unload();
@@ -1474,7 +1509,7 @@ namespace Oxide.Plugins
                 {
                     RestrictedInputItems = new RestrictedInputItems
                     {
-                        DisallowedInputShortNames = new string[]
+                        DisallowedInputShortNames = new CaseInsensitiveHashSet
                         {
                             "rope",
                         },
@@ -1505,8 +1540,8 @@ namespace Oxide.Plugins
 
                 AssertSubscribed(_plugin.plugins.PluginManager, _plugin, nameof(OnRecyclerToggle), subscribed: false);
                 var gears = AddItemToContainer(_recycler.inventory, "gears");
-
                 _recycler.StartRecycling();
+
                 yield return new WaitForSeconds(4.9f);
                 AssertItemAmount(gears, 1);
                 yield return new WaitForSeconds(0.11f);
@@ -1527,6 +1562,8 @@ namespace Oxide.Plugins
 
                 var gears = AddItemToContainer(_recycler.inventory, "gears");
                 _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+                _recycler.StartRecycling();
+
                 yield return null;
                 AssertItemAmount(gears, 1);
                 yield return new WaitForSeconds(0.11f);
@@ -1544,7 +1581,7 @@ namespace Oxide.Plugins
                         DefaultRecycleTime = 3,
                         PermissionSpeedProfiles = new PermissionSpeedProfile[]
                         {
-                            new PermissionSpeedProfile { PermissionSuffix = "fast", RecycleTimeMultiplier = 0.1f },
+                            new PermissionSpeedProfile { PermissionSuffix = "fast", TimeMultiplier = 0.1f },
                         },
                     },
                 });
@@ -1553,13 +1590,15 @@ namespace Oxide.Plugins
 
                 var gears = AddItemToContainer(_recycler.inventory, "gears");
                 _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+                _recycler.StartRecycling();
+
                 yield return null;
                 AssertItemAmount(gears, 1);
                 yield return new WaitForSeconds(0.31f);
                 AssertItemAmount(gears, 0);
             }
 
-            [TestMethod("Given default recycle speed 0.2 seconds, gears 0.1, gears should recycle after 0.1 seconds, metalpipes after 0.2 seconds")]
+            [TestMethod("Given default recycle time 0.2 seconds, gears 0.5 multiplier, gears should recycle after 0.1 seconds, metalpipes after 0.2 seconds")]
             public IEnumerator Test_RecycleSpeed()
             {
                 InitializePlugin(new Configuration
@@ -1568,9 +1607,9 @@ namespace Oxide.Plugins
                     {
                         Enabled = true,
                         DefaultRecycleTime = 0.2f,
-                        TimeByShortName = new Dictionary<string, float>
+                        TimeMultiplierByShortName = new Dictionary<string, float>
                         {
-                            ["gears"] = 0.1f,
+                            ["gears"] = 0.5f,
                         },
                     },
                 });
@@ -1581,6 +1620,7 @@ namespace Oxide.Plugins
                 var pipe2 = AddItemToContainer(_recycler.inventory, "metalpipe", slot: 3);
 
                 _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+                _recycler.StartRecycling();
 
                 yield return null;
                 yield return new WaitForSeconds(0.11f);
@@ -1618,7 +1658,8 @@ namespace Oxide.Plugins
 
                 var gears = AddItemToContainer(_recycler.inventory, "gears", 3);
                 _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
-                var component = _recycler.GetComponentInParent<RecyclerComponent>();
+                _recycler.StartRecycling();
+
                 yield return null;
                 yield return new WaitForSeconds(0.11f);
                 AssertItemAmount(gears, 0);
@@ -1646,6 +1687,7 @@ namespace Oxide.Plugins
 
                 var gears = AddItemToContainer(_recycler.inventory, "gears", 75);
                 _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+                _recycler.StartRecycling();
 
                 yield return null;
                 yield return new WaitForSeconds(0.11f);
@@ -1683,6 +1725,7 @@ namespace Oxide.Plugins
 
                 var gears = AddItemToContainer(_recycler.inventory, "gears", 75);
                 _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+                _recycler.StartRecycling();
 
                 yield return null;
                 yield return new WaitForSeconds(0.11f);
@@ -1720,6 +1763,7 @@ namespace Oxide.Plugins
 
                 var gears = AddItemToContainer(_recycler.inventory, "gears", 3);
                 _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+                _recycler.StartRecycling();
 
                 yield return null;
                 yield return new WaitForSeconds(0.11f);
@@ -1765,6 +1809,7 @@ namespace Oxide.Plugins
 
                 var gears = AddItemToContainer(_recycler.inventory, "gears", 3);
                 _plugin.CallHook(nameof(OnRecyclerToggle), _recycler, _player);
+                _recycler.StartRecycling();
 
                 yield return null;
                 yield return new WaitForSeconds(0.11f);
@@ -1868,7 +1913,7 @@ namespace Oxide.Plugins
                     var isAsync = methodInfo.ReturnType == typeof(IEnumerator);
                     if (!isAsync && methodInfo.ReturnType != typeof(void))
                     {
-                        Interface.Oxide.LogError($"Disallowed return type '{methodInfo.ReturnType.FullName}' for test '{testMethodAttribute.Name}'");
+                        LogError($"Disallowed return type '{methodInfo.ReturnType.FullName}' for test '{testMethodAttribute.Name}'");
                         continue;
                     }
 
@@ -1913,7 +1958,7 @@ namespace Oxide.Plugins
                 if (_coroutine != null)
                 {
                     ServerMgr.Instance.StopCoroutine(_coroutine);
-                    Interface.Oxide.LogWarning("Interrupted tests.");
+                    LogWarning("Interrupted tests.");
                 }
 
                 RunAfterAll(true);
@@ -1930,7 +1975,7 @@ namespace Oxide.Plugins
                 }
                 catch (Exception ex)
                 {
-                    Interface.Oxide.LogError($"Failed to run BeforeAll() for test suite {GetType().FullName}:\n{ex}");
+                    LogError($"Failed to run BeforeAll() for test suite {GetType().FullName}:\n{ex}");
                     IsRunning = false;
                     return false;
                 }
@@ -1945,7 +1990,7 @@ namespace Oxide.Plugins
                 }
                 catch (Exception ex)
                 {
-                    Interface.Oxide.LogError($"Failed to run BeforeEach() for test suite {GetType().FullName}:\n{ex}");
+                    LogError($"Failed to run BeforeEach() for test suite {GetType().FullName}:\n{ex}");
                     return false;
                 }
             }
@@ -1959,7 +2004,7 @@ namespace Oxide.Plugins
                 }
                 catch (Exception ex)
                 {
-                    Interface.Oxide.LogError($"Failed to run AfterEach() for test suite {GetType().FullName}:\n{ex}");
+                    LogError($"Failed to run AfterEach() for test suite {GetType().FullName}:\n{ex}");
                     return false;
                 }
             }
@@ -1972,7 +2017,7 @@ namespace Oxide.Plugins
                 }
                 catch (Exception ex)
                 {
-                    Interface.Oxide.LogError($"Failed to run AfterAll() method for test suite {GetType().FullName}:\n{ex}");
+                    LogError($"Failed to run AfterAll() method for test suite {GetType().FullName}:\n{ex}");
                 }
 
                 IsRunning = false;
@@ -2013,7 +2058,7 @@ namespace Oxide.Plugins
                     }
                     catch (Exception ex)
                     {
-                        Interface.Oxide.LogError($"Failed to run cleanup action:\n{ex}");
+                        LogError($"Failed to run cleanup action:\n{ex}");
                     }
                 }
             }
@@ -2119,23 +2164,23 @@ namespace Oxide.Plugins
                     switch (testInfo.Status)
                     {
                         case TestStatus.Success:
-                            Interface.Oxide.LogWarning($"[PASSED]  {testInfo.Name}");
+                            LogWarning($"[PASSED]  {testInfo.Name}");
                             break;
 
                         case TestStatus.Skipped:
-                            Interface.Oxide.LogWarning($"[SKIPPED] {testInfo.Name}");
+                            LogWarning($"[SKIPPED] {testInfo.Name}");
                             break;
 
                         case TestStatus.Error:
-                            Interface.Oxide.LogError($"[FAILED]  {testInfo.Name}:\n{testInfo.Exception}");
+                            LogError($"[FAILED]  {testInfo.Name}:\n{testInfo.Exception}");
                             break;
 
                         case TestStatus.Running:
-                            Interface.Oxide.LogError($"[RUNNING] {testInfo.Name}");
+                            LogError($"[RUNNING] {testInfo.Name}");
                             break;
 
                         default:
-                            Interface.Oxide.LogError($"[{testInfo.Status}] {testInfo.Name}");
+                            LogError($"[{testInfo.Status}] {testInfo.Name}");
                             break;
                     }
                 }

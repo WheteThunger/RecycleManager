@@ -34,7 +34,7 @@ Default configuration:
   "Custom recycle speed": {
     "Enabled": false,
     "Default recycle time (seconds)": 5.0,
-    "Recycle time by item short name (item: seconds)": {},
+    "Recycle time multiplier by item short name (item: multiplier)": {},
     "Recycle time multiplier by permission": [
       {
         "Permission suffix": "fast",
@@ -73,16 +73,17 @@ Default configuration:
 
 - `Custom recycle speed` -- This section allows you to customize recycler speed.
   - `Enabled` (`true` or `false`) -- While `true`, this plugin will override the recycling speed on all recyclers. Other plugins can use the `OnRecycleManagerSpeed` hook to override this behavior for specific recyclers or players.
-  - `Default recycle time (seconds)` -- While `Enabled` is `true`, this value determines how long (in seconds) recyclers will take to produce items. Vanilla equivalent is `5.0` seconds.
-  - `Recycle time by item short name (item: seconds)` -- This section allows you to specify how long (in seconds) recyclers will take to process specific input items, overriding `Default recycle time (seconds)`.
-    - Example: `{ "gears": 3.0, "metalpipe": 2.0 }`
-  - `Recycle time multiplier by permission` -- This list defines speed multipliers that apply only to players with the corresponding permission. Each entry in this list will generate a permission of the format `recyclemanager.speed.<suffix>`. Granting that permission to a player assigns that speed multiplier to them.
+  - `Default recycle time (seconds)` -- While `Enabled` is `true`, this value determines how long (in seconds) recyclers will take to process each item. Vanilla equivalent is `5.0` seconds.
+  - `Recycle time multiplier by item short name (item: multiplier)` -- This section allows you to speed up or slow down recycling for specific input items, using multipliers.
+    - Example: `{ "gears": 0.5, "metalpipe": 0.25 }` will make `gears` recycle in half the time (2x as fast), and `metalpipe` recycle in 1/4 the time (4x as fast).
+    - `0.5` = 2x speed
+    - `0.25` = 4x speed
+    - `0.2` = 5x speed
+    - `0.1` = 10x speed
+    - `0.0` = instant
+  - `Recycle time multiplier by permission` -- This list allows you to speed up or slow down recycling for specific players according to their permission. Each entry in this list will generate a permission of the format `recyclemanager.speed.<suffix>`. Granting that permission to a player assigns the corresponding multiplier to them.
     - `Permission suffix` -- This is used to generate a permission of the format `recyclemanager.speed.<suffix>`. For example, if you set this to `"fast"`, the plugin will generate the permission `recyclemanager.speed.fast`.
     - `Recycle time multiplier` -- The time the recycler takes to produce items will be multiplied by this value.
-      - `0.5` = 2x speed
-      - `0.2` = 5x speed
-      - `0.1` = 10x speed
-      - `0.0` = instant
 
 #### Item restrictions
 
@@ -97,7 +98,7 @@ Default configuration:
 #### Recycle stack speed
 
 - `Max items per recycle` -- This section allows you to configure the max number of items that can be recycled at a time within a given stack of items. In vanilla, at most `10%` of the max stack size of an item can be recycled at a time. For example, if the `techparts` item has a max stack size of `50`, only `5` can be recycled at a time in vanilla.
-  - `Default percent` -- This percentage applies to all items, except those that match one of the below short names, skin IDs, or display names. If you want to allow all items to be recycled while at max stack size, set this value to `100.0` and leave the other `Percent by ...` options blank.
+  - `Default percent` -- This percentage applies to all items, except those that match one of the below short names, skin IDs, or display names. If you want to allow all items to be recycled while at max stack size, set this value to `100.0` and leave the other `Percent by ...` options blank (`{}`).
   - `Percent by input item short name` -- This section allows you to override the percentage for specific items by item short name.
     - Example: `{ "gears": 100.0, "metalpipe": 100.0 }`
   - `Percent by input item skin ID` -- This section allows you to override the percentage for specific items by item skin ID.
@@ -107,7 +108,7 @@ Default configuration:
 
 #### Output multipliers
 
-- `Output multipliers` -- This section allows you to increase or decrease the output of specific items. For example, if you set `scrap` to `2.0`, all scrap output will be double.
+- `Output multipliers` -- This section allows you to increase or decrease the output of specific items. For example, if you set `scrap` to `2.0`, all scrap output will be doubled.
   - `Default multiplier` -- This multipler applies to all items, except for those overriden in `Multiplier by output item short name`.
   - `Multiplier by output item short name` -- This section allows you to override the default multiplier for items by short name.
     - Example: `{ "scrap": 2.0, "metal.fragments": 0.0 }`
@@ -116,7 +117,7 @@ Default configuration:
 
 **NOTICE: Recyclers will output only 50% of the outputs that you configure here, since recyclers return only 50% of what an item takes to craft.**
 
-- `Override output` -- This section allows you to override the output of specific items. This can be used to replace the output of items that are already recyclable in vanilla, as well as to allow custom items to be recycled. The output you configure here will **not** be affected by `Output multipliers`, but it will be affected by recycling "efficiency" (the percentage of the crafting cost that is output by recycling), which is 50% in vanilla (plugins sometimes change it). For example, if you want an item to output `5` scrap, you should account for recycler efficiency by configuring that item to output `10` scrap.
+- `Override output` -- This section allows you to override the output of specific items. This can be used to replace the output of items that are already recyclable in vanilla, as well as to allow custom items to be recycled. The output you configure here will **not** be affected by `Output multipliers`, but it will be affected by recycling "efficiency" (the percentage of the crafting cost that is output by recycling), which is 50% in vanilla (plugins sometimes change it). For example, if you want an item to output `5` scrap, you should account for recycler efficiency by configuring that item to "output" `10` scrap.
   - `Override output by input item short name` -- This section allows you to define what the recycler will output for specific items by item short name. The output includes the following options.
     - `Item short name` -- The short name name of the output item.
     - `Item skin ID` -- The *optional* skin ID of the output item.
@@ -132,9 +133,9 @@ Default configuration:
   "Custom recycle speed": {
     "Enabled": false,
     "Default recycle time (seconds)": 5.0,
-    "Recycle time by item short name (item: seconds)": {
-      "gears": 3.0,
-      "metalpipe": 2.0
+    "Recycle time multiplier by item short name (item: multiplier)": {
+      "gears": 0.6,
+      "metalpipe": 0.4
     },
     "Recycle time multiplier by permission": [
       {
@@ -280,13 +281,28 @@ object OnRecycleManagerItemRecyclable(Item item, Recycler recycler)
 #### OnRecycleManagerSpeed
 
 ```cs
-object OnRecycleManagerSpeed(Recycler recycler, BasePlayer player)
+object OnRecycleManagerSpeed(Recycler recycler, BasePlayer player, float[] recycleTime)
 ```
 
-- Called when this plugin is about to change the speed of a recycler, after a player has toggled the recycler on
+- Called after the player has toggled on the recycler
 - Returning `false` will prevent this plugin from altering the recycler speed
 - Returning `null` will result in the default behavior
-- This hook will not be called when the custom speed feature is disabled
+- This hook will not be called when `Custom recycle speed` -> `Enabled` is `false`
+- The `recycleTime` array has one item (at position `0`)
+  - After this hook has been called on all subscribed plugins, if all plugins returned `null`, Recycle Manager will change the recycler time to `recycleTime[0]`
+  - If you want to alter the recycle time, consider the current value, change it if necessary, then return `null`
+
+```cs
+// Example: Double recycle speed when a player starts their own personal recycler.
+object OnRecycleManagerSpeed(Recycler recycler, BasePlayer player, float[] recycleTime)
+{
+    if (recycler.OwnerID == player.userID)
+    {
+        recycleTime[0] /= 2;
+    }
+    return null;
+}
+```
 
 #### OnRecycleManagerRecycle
 
