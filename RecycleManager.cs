@@ -2087,14 +2087,13 @@ namespace Oxide.Plugins
                     try
                     {
                         testInfo.MethodInfo.Invoke(this, args);
+                        testInfo.Status = TestStatus.Success;
                     }
                     catch (Exception ex)
                     {
                         testInfo.Exception = ex;
                         testInfo.Status = TestStatus.Error;
                     }
-
-                    testInfo.Status = TestStatus.Success;
 
                     RunCleanupActions(cleanupActions);
 
