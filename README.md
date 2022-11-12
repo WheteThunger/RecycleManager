@@ -6,10 +6,11 @@
 - Allows fully customizing recycler output
 - Allows recycling custom items
 - Allows outputting custom items
+- Administration panel allows previewing and editing recycler outputs in-game
 
 ## Permissions
 
-- `recyclemanager.admin` -- Allows all commands.
+- `recyclemanager.admin` -- Allows all commands, and allows using the administration panel while viewing a recycler.
 
 ### Speed permissions
 
@@ -31,6 +32,9 @@ Default configuration:
 
 ```json
 {
+  "Edit UI": {
+    "Enabled": true
+  },
   "Custom recycle speed": {
     "Enabled": false,
     "Default recycle time (seconds)": 5.0,
@@ -62,13 +66,18 @@ Default configuration:
     "Default multiplier": 1.0,
     "Multiplier by output item short name": {}
   },
-  "Override output (before efficiency factor)": {
+  "Override output": {
     "Override output by input item short name": {},
     "Override output by input item skin ID": {},
     "Override output by input item display name (custom items)": {}
   }
 }
 ```
+
+#### Edit UI
+
+- `Edit UI`
+  - `Enabled` (`true` or `false`) -- While `true`, players with the `recyclemanager.admin` permission will have access to the administration panel to preview and edit the recycle output of items. Set this to `false` if you don't intend on using the administration panel, to save a tiny bit on performance.
 
 #### Recycler speed
 
@@ -121,9 +130,7 @@ Recycle time multiplier examples:
 
 #### Custom output / custom recyclables
 
-**NOTICE: Recyclers will output only 50% of the outputs that you configure here, since recyclers return only 50% of what an item takes to craft.**
-
-- `Override output` -- This section allows you to override the output of specific items. This can be used to replace the output of items that are already recyclable in vanilla, as well as to allow custom items to be recycled. The output you configure here will **not** be affected by `Output multipliers`, but it will be affected by recycling "efficiency" (the percentage of the crafting cost that is output by recycling), which is 50% in vanilla (plugins sometimes change it). For example, if you want an item to output `5` scrap, you should account for recycler efficiency by configuring that item to "output" `10` scrap.
+- `Override output` -- This section allows you to override the output of specific items. This can be used to replace the output of items that are already recyclable in vanilla, as well as to allow custom items to be recycled. The output you configure here will **not** be affected by `Output multipliers`.
   - `Override output by input item short name` -- This section allows you to define what the recycler will output for specific items by item short name. The output includes the following options.
     - `Item short name` -- The short name name of the output item.
     - `Item skin ID` -- The *optional* skin ID of the output item.
@@ -136,6 +143,9 @@ Recycle time multiplier examples:
 
 ```json
 {
+  "Edit UI": {
+    "Enabled": true
+  },
   "Custom recycle speed": {
     "Enabled": true,
     "Default recycle time (seconds)": 5.0,
@@ -249,18 +259,6 @@ Recycle time multiplier examples:
 ```
 
 ## Localization
-
-```json
-{
-  "Error.NoPermission": "You don't have permission to do that.",
-  "Error.Config": "Error: The config did not load correctly. Please fix the config and reload the plugin before running this command.",
-  "Error.InvalidItem": "Error: Invalid item: <color=#fe0>{0}</color>",
-  "Item.Syntax": "Syntax: <color=#fe0>{0} <item id or short name></color>",
-  "Add.Exists": "Error: Item <color=#fe0>{0}</color> is already in the config. To reset that item to vanilla output, use <color=#fe0>recyclemanager.reset {0}</color>.",
-  "Add.Success": "Successfully added item <color=#fe0>{0}</color> to the config.",
-  "Reset.Success": "Successfully reset item <color=#fe0>{0}</color> in the config."
-}
-```
 
 ## FAQ
 
