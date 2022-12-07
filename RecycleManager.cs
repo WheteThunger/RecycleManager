@@ -816,7 +816,14 @@ namespace Oxide.Plugins
 
         private class CuiInputFieldComponentHud : CuiInputFieldComponent
         {
+            [JsonProperty("hudMenuInput", DefaultValueHandling = DefaultValueHandling.Ignore)]
             public bool HudMenuInput { get; set; }
+        }
+
+        private class CuiElementRecreate : CuiElement
+        {
+            [JsonProperty("destroyUi", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public string DestroyUi { get; set; }
         }
 
         private static class EditUI
@@ -882,7 +889,6 @@ namespace Oxide.Plugins
                 var elements = CreateContainer();
                 AddEditButton(elements, plugin, player);
 
-                DestroyUI(player);
                 CuiHelper.AddUi(player, elements);
             }
 
@@ -891,7 +897,6 @@ namespace Oxide.Plugins
                 var elements = CreateContainer();
                 AddEditPanel(elements, plugin, player, state);
 
-                DestroyUI(player);
                 CuiHelper.AddUi(player, elements);
             }
 
@@ -903,18 +908,22 @@ namespace Oxide.Plugins
                 return new CuiElementContainer
                 {
                     {
-                        new CuiPanel
+                        new CuiElementRecreate
                         {
-                            RectTransform =
+                            Parent = "Hud.Menu",
+                            Name = UIName,
+                            DestroyUi = UIName,
+                            Components =
                             {
-                                AnchorMin = AnchorMin,
-                                AnchorMax = AnchorMax,
-                                OffsetMin = $"{offsetX} {offsetY}",
-                                OffsetMax = $"{offsetX} {offsetY}",
-                            },
-                        },
-                        "Hud.Menu",
-                        UIName
+                                new CuiRectTransformComponent
+                                {
+                                    AnchorMin = AnchorMin,
+                                    AnchorMax = AnchorMax,
+                                    OffsetMin = $"{offsetX} {offsetY}",
+                                    OffsetMax = $"{offsetX} {offsetY}",
+                                }
+                            }
+                        }
                     }
                 };
             }
