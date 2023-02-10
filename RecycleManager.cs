@@ -19,7 +19,7 @@ using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("Recycle Manager", "WhiteThunder", "2.0.0")]
+    [Info("Recycle Manager", "WhiteThunder", "2.0.1")]
     [Description("Allows customizing recycler speed, input, and output")]
     internal class RecycleManager : CovalencePlugin
     {
@@ -1609,7 +1609,7 @@ namespace Oxide.Plugins
                     }
 
                     case UICommand.Cancel:
-                        StopEditing();
+                        StopEditing(redraw: true);
                         break;
 
                     case UICommand.InputPercentage:
@@ -1809,9 +1809,9 @@ namespace Oxide.Plugins
                 return IsVanillaRecyclable(_editState.InputItem);
             }
 
-            private void StopEditing()
+            private void StopEditing(bool redraw = false)
             {
-                if (_editState == null)
+                if (_editState == null || _recycler == null || _recycler.IsDestroyed)
                     return;
 
                 _recycler.inventory.canAcceptItem = _originalCanAcceptItem;
@@ -1825,7 +1825,11 @@ namespace Oxide.Plugins
                 RemoveOutputItems();
 
                 _editState = null;
-                DrawUI();
+
+                if (redraw)
+                {
+                    DrawUI();
+                }
             }
 
             private void StopViewing()
