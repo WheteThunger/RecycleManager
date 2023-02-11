@@ -1726,7 +1726,13 @@ namespace Oxide.Plugins
             {
                 var output = GetOutput(_editState.IdentificationType, _editState.OutputType);
                 if (output == null)
+                {
+                    for (var i = 0; i < _editState.Chances.Length; i++)
+                    {
+                        _editState.Chances[i] = 0;
+                    }
                     return;
+                }
 
                 _plugin.PopulateOutputWithOverride(_recycler, output, 1, alwaysRoundUp: true);
                 _pauseAutoChangeOutput = true;
