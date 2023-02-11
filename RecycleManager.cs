@@ -153,17 +153,17 @@ namespace Oxide.Plugins
             if (RecycleItemWasBlocked(item, recycler))
                 return null;
 
-            var amountToConsume = DetermineConsumptionAmount(recycler, item);
-            if (amountToConsume <= 0)
+            var recycleAmount = DetermineConsumptionAmount(recycler, item);
+            if (recycleAmount <= 0)
                 return False;
 
             var customIngredientList = _config.OverrideOutput.GetBestOverride(item);
             if (customIngredientList != null)
             {
-                item.UseItem(amountToConsume);
+                item.UseItem(recycleAmount);
 
                 // Overrides already account for standard recycle efficiency, so only calculate based on item condition.
-                if (PopulateOutputWithOverride(recycler, customIngredientList, amountToConsume, DetermineRecycleEfficiency(item)))
+                if (PopulateOutputWithOverride(recycler, customIngredientList, recycleAmount, DetermineRecycleEfficiency(item)))
                 {
                     recycler.StopRecycling();
                 }
@@ -176,9 +176,9 @@ namespace Oxide.Plugins
             if (!IsVanillaRecyclable(item))
                 return null;
 
-            item.UseItem(amountToConsume);
+            item.UseItem(recycleAmount);
 
-            var outputIsFull = PopulateOutputVanilla(_config, recycler, item, amountToConsume, DetermineRecycleEfficiency(item, recycler.recycleEfficiency));
+            var outputIsFull = PopulateOutputVanilla(_config, recycler, item, recycleAmount, DetermineRecycleEfficiency(item, recycler.recycleEfficiency));
             if (outputIsFull || !recycler.HasRecyclable())
             {
                 recycler.StopRecycling();
@@ -410,28 +410,28 @@ namespace Oxide.Plugins
 
         private int DetermineConsumptionAmount(Recycler recycler, Item item)
         {
-            var amountToConsume = 1;
+            var recycleAmount = 1;
 
             if (item.amount > 1)
             {
                 var consumeMultiplier = _config.MaxItemsPerRecycle.GetPercent(item) / 100f;
-                amountToConsume = Mathf.CeilToInt(Mathf.Min(item.amount, (float)item.info.stackable * consumeMultiplier));
+                recycleAmount = Mathf.CeilToInt(Mathf.Min(item.amount, (float)item.info.stackable * consumeMultiplier));
 
                 // In case the configured multiplier is 0, ensure at least 1 item is recycled.
-                amountToConsume = Math.Max(amountToConsume, 1);
+                recycleAmount = Math.Max(recycleAmount, 1);
             }
 
             // Call standard Oxide hook for compatibility.
-            var amountOverride = Interface.CallHook("OnItemRecycleAmount", item, amountToConsume, recycler);
+            var amountOverride = Interface.CallHook("OnItemRecycleAmount", item, recycleAmount, recycler);
             if (amountOverride is int)
             {
                 return (int)amountOverride;
             }
 
-            return amountToConsume;
+            return recycleAmount;
         }
 
-        private bool PopulateOutputWithOverride(Recycler recycler, IngredientInfo[] customIngredientList, int amountToConsume, float recycleEfficiency = 1, bool alwaysRoundUp = false)
+        private bool PopulateOutputWithOverride(Recycler recycler, IngredientInfo[] customIngredientList, int recycleAmount, float recycleEfficiency = 1, bool forEditor = false)
         {
             var outputIsFull = false;
 
@@ -440,15 +440,15 @@ namespace Oxide.Plugins
                 if (ingredientInfo.ItemDefinition == null)
                     continue;
 
-                var amountToCreatePerConsumedItem = ingredientInfo.Amount * recycleEfficiency;
-                if (amountToCreatePerConsumedItem <= 0)
+                var ingredientAmount = ingredientInfo.Amount * recycleEfficiency;
+                if (ingredientAmount <= 0)
                     continue;
 
-                var amountToCreate = CalculateOutputAmount(amountToConsume, amountToCreatePerConsumedItem, alwaysRoundUp: alwaysRoundUp);
-                if (amountToCreate <= 0)
+                var outputAmount = CalculateOutputAmount(recycleAmount, ingredientAmount, forEditor: forEditor);
+                if (outputAmount <= 0)
                     continue;
 
-                if (AddItemToRecyclerOutput(recycler, ingredientInfo.ItemDefinition, amountToCreate, ingredientInfo.SkinId, ingredientInfo.DisplayName))
+                if (AddItemToRecyclerOutput(recycler, ingredientInfo.ItemDefinition, outputAmount, ingredientInfo.SkinId, ingredientInfo.DisplayName))
                 {
                     outputIsFull = true;
                 }
@@ -457,7 +457,7 @@ namespace Oxide.Plugins
             return outputIsFull;
         }
 
-        private static bool PopulateOutputVanilla(Configuration config, Recycler recycler, Item item, int amountToConsume, float recycleEfficiency = RecycleEfficiency, bool alwaysRoundUp = false)
+        private static bool PopulateOutputVanilla(Configuration config, Recycler recycler, Item item, int recycleAmount, float recycleEfficiency = RecycleEfficiency, bool forEditor = false)
         {
             var outputIsFull = false;
 
@@ -465,10 +465,10 @@ namespace Oxide.Plugins
             {
                 var scrapOutputMultiplier = config.OutputMultipliers.GetOutputMultiplier(ScrapItemId);
 
-                var scrapAmount = Mathf.CeilToInt(item.info.Blueprint.scrapFromRecycle * amountToConsume);
+                var scrapAmount = Mathf.CeilToInt(item.info.Blueprint.scrapFromRecycle * recycleAmount);
                 scrapAmount = Mathf.CeilToInt(scrapAmount * scrapOutputMultiplier);
 
-                if (!alwaysRoundUp && item.info.stackable == 1 && item.hasCondition)
+                if (!forEditor && item.info.stackable == 1 && item.hasCondition)
                 {
                     scrapAmount = Mathf.CeilToInt(scrapAmount * item.conditionNormalized);
                 }
@@ -486,24 +486,24 @@ namespace Oxide.Plugins
                 if (ingredient.itemDef.itemid == ScrapItemId)
                     continue;
 
-                var amountToCreatePerConsumedItem = ingredient.amount
+                var ingredientAmount = ingredient.amount
                     * recycleEfficiency
                     / item.info.Blueprint.amountToCreate;
 
-                if (amountToCreatePerConsumedItem <= 0)
+                if (ingredientAmount <= 0)
                     continue;
 
-                var amountToCreate = CalculateOutputAmount(
-                    amountToConsume,
-                    amountToCreatePerConsumedItem,
+                var outputAmount = CalculateOutputAmount(
+                    recycleAmount,
+                    ingredientAmount,
                     config.OutputMultipliers.GetOutputMultiplier(ingredient.itemid),
-                    alwaysRoundUp: alwaysRoundUp
+                    forEditor
                 );
 
-                if (amountToCreate <= 0)
+                if (outputAmount <= 0)
                     continue;
 
-                if (AddItemToRecyclerOutput(recycler, ingredient.itemDef, amountToCreate))
+                if (AddItemToRecyclerOutput(recycler, ingredient.itemDef, outputAmount))
                 {
                     outputIsFull = true;
                 }
@@ -556,63 +556,64 @@ namespace Oxide.Plugins
             return item;
         }
 
-        private static int CalculateOutputAmountVanillaRandom(int amountToConsume, float amountToCreatePerConsumedItem)
+        private static int CalculateOutputAmountVanillaRandom(int recycleAmount, float ingredientChance)
         {
-            var amountToCreate = 0;
+            var outputAmount = 0;
 
-            // Use vanilla behavior for up to 100 items (arbitrary number).
             // Roll a random number for every item to consume.
-            for (var i = 0; i < amountToConsume; i++)
+            for (var i = 0; i < recycleAmount; i++)
             {
-                if (UnityEngine.Random.Range(0f, 1f) <= amountToCreatePerConsumedItem)
+                if (UnityEngine.Random.Range(0f, 1f) <= ingredientChance)
                 {
-                    amountToCreate++;
+                    outputAmount++;
                 }
             }
 
-            return amountToCreate;
+            return outputAmount;
         }
 
-        private static int CalculateOutputAmountFast(int amountToConsume, float amountToCreatePerConsumedItem)
+        private static int CalculateOutputAmountFast(int recycleAmount, float ingredientAmount)
         {
             // To save on performance, don't generate hundreds/thousands/millions of random numbers.
-            var fractionalAmountToCreate = amountToCreatePerConsumedItem * amountToConsume;
+            var fractionalOutputAmount = ingredientAmount * recycleAmount;
 
-            var amountToCreate = (int)fractionalAmountToCreate;
+            var integerOutputAmount = (int)fractionalOutputAmount;
 
             // Roll a random number to see if the the remainder should be given.
-            var remainderFraction = fractionalAmountToCreate - amountToCreate;
-            if (remainderFraction > 0 && UnityEngine.Random.Range(0f, 1f) <= remainderFraction)
+            var remainderFractionalOutputAmount = fractionalOutputAmount - integerOutputAmount;
+            if (remainderFractionalOutputAmount > 0 && UnityEngine.Random.Range(0f, 1f) <= remainderFractionalOutputAmount)
             {
-                amountToCreate++;
+                integerOutputAmount++;
             }
 
-            return amountToCreate;
+            return integerOutputAmount;
         }
 
-        private static int CalculateOutputAmount(int amountToConsume, float amountToCreatePerConsumedItem, float outputMultiplier = 1, bool alwaysRoundUp = false)
+        private static int CalculateOutputAmount(int recycleAmount, float ingredientAmount, float outputMultiplier = 1, bool forEditor = false)
         {
-            amountToCreatePerConsumedItem *= outputMultiplier;
+            // Adjust using vanilla rounding behavior before applying multipliers, to match user expectations.
+            var adjustedIngredientAmount = ingredientAmount > 1
+                ? Mathf.Ceil(ingredientAmount)
+                : ingredientAmount;
 
-            if (alwaysRoundUp || amountToCreatePerConsumedItem >= 1)
-            {
-                // Round up to make sure vanilla fractional amounts are multiplied accurately.
-                return amountToConsume * Mathf.CeilToInt(amountToCreatePerConsumedItem);
-            }
+            adjustedIngredientAmount *= outputMultiplier;
 
-            return amountToConsume <= 100
-                ? CalculateOutputAmountVanillaRandom(amountToConsume, amountToCreatePerConsumedItem)
-                : CalculateOutputAmountFast(amountToConsume, amountToCreatePerConsumedItem);
+            // Use more optimized RNG for stacks larger than 100, because players probably don't care at that point.
+            var outputAmount = adjustedIngredientAmount < 1 && recycleAmount <= 100
+                ? CalculateOutputAmountVanillaRandom(recycleAmount, adjustedIngredientAmount)
+                : CalculateOutputAmountFast(recycleAmount, adjustedIngredientAmount);
+
+            return forEditor ? Math.Max(1, outputAmount) : outputAmount;
         }
 
-        private static bool AddItemToRecyclerOutput(Recycler recycler, ItemDefinition itemDefinition, int amountToCreate, ulong skinId = 0, string displayName = null)
+        private static bool AddItemToRecyclerOutput(Recycler recycler, ItemDefinition itemDefinition, int ingredientAmount, ulong skinId = 0, string displayName = null)
         {
             var outputIsFull = false;
-            var numStacks = Mathf.CeilToInt(amountToCreate / (float)itemDefinition.stackable);
+            var numStacks = Mathf.CeilToInt(ingredientAmount / (float)itemDefinition.stackable);
 
             for (var i = 0; i < numStacks; i++)
             {
-                var amountForStack = Math.Min(amountToCreate, itemDefinition.stackable);
+                var amountForStack = Math.Min(ingredientAmount, itemDefinition.stackable);
                 var outputItem = CreateItem(itemDefinition, amountForStack, skinId, displayName);
 
                 if (!recycler.MoveItemToOutput(outputItem))
@@ -620,9 +621,9 @@ namespace Oxide.Plugins
                     outputIsFull = true;
                 }
 
-                amountToCreate -= amountForStack;
+                ingredientAmount -= amountForStack;
 
-                if (amountToCreate <= 0)
+                if (ingredientAmount <= 0)
                     break;
             }
 
@@ -1726,7 +1727,7 @@ namespace Oxide.Plugins
                     return;
                 }
 
-                _plugin.PopulateOutputWithOverride(_recycler, output, 1, alwaysRoundUp: true);
+                _plugin.PopulateOutputWithOverride(_recycler, output, 1, forEditor: true);
                 _pauseAutoChangeOutput = true;
 
                 for (var i = 0; i < _editState.Chances.Length; i++)
@@ -3504,7 +3505,7 @@ namespace Oxide.Plugins
                 AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 975);
             }
 
-            [TestMethod("Given 2.0 default multiplier, 3.0 scrap output multiplier, stack of 3 gears, should output 90 scrap & 75 metal fragments")]
+            [TestMethod("Given 2.0 default multiplier, 3.0 scrap output multiplier, stack of 3 gears, should output 90 scrap & 78 metal fragments")]
             public IEnumerator Test_OutputMultipliers(List<Action> cleanupActions)
             {
                 InitializePlugin(new Configuration
@@ -3534,7 +3535,7 @@ namespace Oxide.Plugins
                 yield return new WaitForSeconds(0.11f);
                 AssertItemAmount(gears, 0);
                 AssertItemInContainer(_recycler.inventory, 6, "scrap", 90);
-                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 75);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 78);
             }
 
             [TestMethod("Given override for gears, stack of 3 gears, should output custom items")]
