@@ -19,7 +19,7 @@ using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("Recycle Manager", "WhiteThunder", "2.0.1")]
+    [Info("Recycle Manager", "WhiteThunder", "2.0.2")]
     [Description("Allows customizing recycler speed, input, and output")]
     internal class RecycleManager : CovalencePlugin
     {
@@ -592,25 +592,17 @@ namespace Oxide.Plugins
 
         private static int CalculateOutputAmount(int amountToConsume, float amountToCreatePerConsumedItem, float outputMultiplier = 1, bool alwaysRoundUp = false)
         {
-            if (amountToCreatePerConsumedItem > 1 && outputMultiplier > 1)
+            amountToCreatePerConsumedItem *= outputMultiplier;
+
+            if (alwaysRoundUp || amountToCreatePerConsumedItem >= 1)
             {
                 // Round up to make sure vanilla fractional amounts are multiplied accurately.
-                amountToCreatePerConsumedItem = Mathf.CeilToInt(amountToCreatePerConsumedItem) * outputMultiplier;
+                return amountToConsume * Mathf.CeilToInt(amountToCreatePerConsumedItem);
             }
 
-            if (!alwaysRoundUp && amountToCreatePerConsumedItem < 1f)
-            {
-                if (amountToConsume <= 100)
-                {
-                    return CalculateOutputAmountVanillaRandom(amountToConsume, amountToCreatePerConsumedItem);
-                }
-                else
-                {
-                    return CalculateOutputAmountFast(amountToConsume, amountToCreatePerConsumedItem);
-                }
-            }
-
-            return amountToConsume * Mathf.CeilToInt(amountToCreatePerConsumedItem);
+            return amountToConsume <= 100
+                ? CalculateOutputAmountVanillaRandom(amountToConsume, amountToCreatePerConsumedItem)
+                : CalculateOutputAmountFast(amountToConsume, amountToCreatePerConsumedItem);
         }
 
         private static bool AddItemToRecyclerOutput(Recycler recycler, ItemDefinition itemDefinition, int amountToCreate, ulong skinId = 0, string displayName = null)
@@ -3512,7 +3504,7 @@ namespace Oxide.Plugins
                 AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 975);
             }
 
-            [TestMethod("Given 2.0 default multiplier, 3.0 scrap output multiplier, stack of 3 gears, should output 90 scrap & 78 metal fragments")]
+            [TestMethod("Given 2.0 default multiplier, 3.0 scrap output multiplier, stack of 3 gears, should output 90 scrap & 75 metal fragments")]
             public IEnumerator Test_OutputMultipliers(List<Action> cleanupActions)
             {
                 InitializePlugin(new Configuration
@@ -3542,7 +3534,7 @@ namespace Oxide.Plugins
                 yield return new WaitForSeconds(0.11f);
                 AssertItemAmount(gears, 0);
                 AssertItemInContainer(_recycler.inventory, 6, "scrap", 90);
-                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 78);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 75);
             }
 
             [TestMethod("Given override for gears, stack of 3 gears, should output custom items")]
