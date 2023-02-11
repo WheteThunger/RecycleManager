@@ -1,3 +1,7 @@
+## Video tutorial
+
+[![Video Tutorial](https://img.youtube.com/vi/tvEw3aWjvFk/maxresdefault.jpg)](https://www.youtube.com/watch?v=tvEw3aWjvFk)
+
 ## Features
 
 - Allows customizing recycler speed globally, in safe zones, per item, and according to permission
