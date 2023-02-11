@@ -19,7 +19,7 @@ using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("Recycle Manager", "WhiteThunder", "2.0.2")]
+    [Info("Recycle Manager", "WhiteThunder", "2.0.3")]
     [Description("Allows customizing recycler speed, input, and output")]
     internal class RecycleManager : CovalencePlugin
     {
