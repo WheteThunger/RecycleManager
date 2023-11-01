@@ -895,7 +895,7 @@ namespace Oxide.Plugins
 
             private static CuiElementContainer CreateContainer()
             {
-                var offsetY = 108f;
+                var offsetY = 109.5f;
                 var offsetX = 192f;
 
                 return new CuiElementContainer
