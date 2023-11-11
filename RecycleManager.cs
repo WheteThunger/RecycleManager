@@ -31,6 +31,7 @@ namespace Oxide.Plugins
 
         private const int ScrapItemId = -932201673;
         private const float RecycleEfficiency = 0.5f;
+        private const float VanillaMaxItemsInStackFraction = 0.1f;
 
         private readonly object True = true;
         private readonly object False = false;
@@ -153,7 +154,8 @@ namespace Oxide.Plugins
             if (RecycleItemWasBlocked(item, recycler))
                 return null;
 
-            var recycleAmount = DetermineConsumptionAmount(recycler, item);
+            var maxItemsInStackFraction = _config.MaxItemsPerRecycle.GetPercent(item) / 100f;
+            var recycleAmount = DetermineConsumptionAmount(recycler, item, maxItemsInStackFraction);
             if (recycleAmount <= 0)
                 return False;
 
@@ -174,6 +176,9 @@ namespace Oxide.Plugins
             // If the item is not vanilla recyclable, and this plugin doesn't have an override,
             // that probably means another plugin is going to handle recycling it.
             if (!IsVanillaRecyclable(item))
+                return null;
+
+            if (!ShouldOverrideRecycling(_config, item.info.Blueprint, maxItemsInStackFraction))
                 return null;
 
             item.UseItem(recycleAmount);
@@ -362,7 +367,7 @@ namespace Oxide.Plugins
         private IngredientInfo[] GetVanillaOutput(ItemDefinition itemDefinition)
         {
             if (itemDefinition.Blueprint?.ingredients == null)
-                return new IngredientInfo[0];
+                return Array.Empty<IngredientInfo>();
 
             var ingredientList = new List<IngredientInfo>();
 
@@ -408,14 +413,34 @@ namespace Oxide.Plugins
                 : recycleEfficiency;
         }
 
-        private int DetermineConsumptionAmount(Recycler recycler, Item item)
+        private static bool ShouldOverrideRecycling(Configuration config, ItemBlueprint blueprint, float maxItemsInStackFraction)
+        {
+            if (maxItemsInStackFraction != VanillaMaxItemsInStackFraction)
+                return true;
+
+            if (blueprint.scrapFromRecycle > 0 && config.OutputMultipliers.GetOutputMultiplier(ScrapItemId) != 1)
+                return true;
+
+            foreach (var ingredient in blueprint.ingredients)
+            {
+                // Skip scrap since it's handled separately.
+                if (ingredient.itemDef.itemid == ScrapItemId)
+                    continue;
+
+                if (config.OutputMultipliers.GetOutputMultiplier(ingredient.itemid) != 1)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private int DetermineConsumptionAmount(Recycler recycler, Item item, float maxItemsInStackFraction)
         {
             var recycleAmount = 1;
 
             if (item.amount > 1)
             {
-                var consumeMultiplier = _config.MaxItemsPerRecycle.GetPercent(item) / 100f;
-                recycleAmount = Mathf.CeilToInt(Mathf.Min(item.amount, (float)item.info.stackable * consumeMultiplier));
+                recycleAmount = Mathf.CeilToInt(Mathf.Min(item.amount, item.info.stackable * maxItemsInStackFraction));
 
                 // In case the configured multiplier is 0, ensure at least 1 item is recycled.
                 recycleAmount = Math.Max(recycleAmount, 1);
