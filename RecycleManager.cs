@@ -183,7 +183,7 @@ namespace Oxide.Plugins
 
             item.UseItem(recycleAmount);
 
-            var outputIsFull = PopulateOutputVanilla(_config, recycler, item, recycleAmount, DetermineRecycleEfficiency(item, recycler.recycleEfficiency));
+            var outputIsFull = PopulateOutputVanilla(_config, recycler, item, recycleAmount, DetermineRecycleEfficiency(item, GetRecycleEfficiency(recycler)));
             if (outputIsFull || !recycler.HasRecyclable())
             {
                 recycler.StopRecycling();
@@ -406,8 +406,9 @@ namespace Oxide.Plugins
             return ingredientList.ToArray();
         }
 
-        private float DetermineRecycleEfficiency(Item item, float recycleEfficiency = 1)
+        private float DetermineRecycleEfficiency(Item item, float? recycleEfficiencyOverride = null)
         {
+            var recycleEfficiency = recycleEfficiencyOverride ?? 1;
             return item.hasCondition
                 ? Mathf.Clamp01(recycleEfficiency * Mathf.Clamp(item.conditionNormalized * item.maxConditionNormalized, 0.1f, 1f))
                 : recycleEfficiency;
@@ -550,6 +551,11 @@ namespace Oxide.Plugins
             T temp = a;
             a = b;
             b = temp;
+        }
+
+        private static float GetRecycleEfficiency(Recycler recycler)
+        {
+            return recycler.IsSafezoneRecycler() ? recycler.safezoneRecycleEfficiency : recycler.radtownRecycleEfficiency;
         }
 
         private static bool IsVanillaRecyclable(Item item)
