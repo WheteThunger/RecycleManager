@@ -40,7 +40,7 @@ namespace Oxide.Plugins
         private const int NumInputSlots = 6;
         private const int NumOutputSlots = 6;
 
-        private readonly RecycleComponentManager _recycleComponentManager = new RecycleComponentManager();
+        private readonly RecycleComponentManager _recycleComponentManager = new();
         private readonly RecycleEditManager _recycleEditManager;
         private readonly float[] _recycleTime = new float[1];
 
@@ -248,8 +248,7 @@ namespace Oxide.Plugins
                 || !VerifyConfigLoaded(player))
                 return;
 
-            ItemDefinition itemDefinition;
-            if (!VerifyValidItemIdOrShortName(player, args.ElementAtOrDefault(0), out itemDefinition, cmd))
+            if (!VerifyValidItemIdOrShortName(player, args.ElementAtOrDefault(0), out var itemDefinition, cmd))
                 return;
 
             if (!_config.OverrideOutput.AddOverride(this, itemDefinition))
@@ -269,8 +268,7 @@ namespace Oxide.Plugins
                 || !VerifyConfigLoaded(player))
                 return;
 
-            ItemDefinition itemDefinition;
-            if (!VerifyValidItemIdOrShortName(player, args.ElementAtOrDefault(0), out itemDefinition, cmd))
+            if (!VerifyValidItemIdOrShortName(player, args.ElementAtOrDefault(0), out var itemDefinition, cmd))
                 return;
 
             _config.OverrideOutput.ResetOverride(this, itemDefinition);
@@ -349,8 +347,7 @@ namespace Oxide.Plugins
                 return false;
             }
 
-            int itemId;
-            if (int.TryParse(itemArg, out itemId))
+            if (int.TryParse(itemArg, out var itemId))
             {
                 itemDefinition = ItemManager.FindItemDefinition(itemId);
                 if (itemDefinition != null)
@@ -375,8 +372,7 @@ namespace Oxide.Plugins
                 _recycleTime[0] *= _config.RecycleSpeed.SafeZoneTimeMultiplier;
             }
 
-            var hookResult = ExposedHooks.OnRecycleManagerSpeed(recycler, player, _recycleTime);
-            if (hookResult is bool && !(bool)hookResult)
+            if (ExposedHooks.OnRecycleManagerSpeed(recycler, player, _recycleTime) is false)
             {
                 recycleTime = 0;
                 return false;
@@ -394,7 +390,7 @@ namespace Oxide.Plugins
             return hookResult;
         }
 
-        private IngredientInfo[] GetVanillaOutput(ItemDefinition itemDefinition)
+        private static IngredientInfo[] GetVanillaOutput(ItemDefinition itemDefinition)
         {
             if (itemDefinition.Blueprint?.ingredients == null)
                 return Array.Empty<IngredientInfo>();
@@ -436,7 +432,7 @@ namespace Oxide.Plugins
             return ingredientList.ToArray();
         }
 
-        private float DetermineRecycleEfficiency(Item item, float? recycleEfficiencyOverride = null)
+        private static float DetermineRecycleEfficiency(Item item, float? recycleEfficiencyOverride = null)
         {
             var recycleEfficiency = recycleEfficiencyOverride ?? 1;
             return item.hasCondition
@@ -465,7 +461,7 @@ namespace Oxide.Plugins
             return false;
         }
 
-        private int DetermineConsumptionAmount(Recycler recycler, Item item, float maxItemsInStackFraction)
+        private static int DetermineConsumptionAmount(Recycler recycler, Item item, float maxItemsInStackFraction)
         {
             var recycleAmount = 1;
 
@@ -478,16 +474,13 @@ namespace Oxide.Plugins
             }
 
             // Call standard Oxide hook for compatibility.
-            var amountOverride = Interface.CallHook("OnItemRecycleAmount", item, recycleAmount, recycler);
-            if (amountOverride is int)
-            {
-                return (int)amountOverride;
-            }
+            if (Interface.CallHook("OnItemRecycleAmount", item, recycleAmount, recycler) is int overrideAmount)
+                return overrideAmount;
 
             return recycleAmount;
         }
 
-        private bool PopulateOutputWithOverride(Recycler recycler, IngredientInfo[] customIngredientList, int recycleAmount, float recycleEfficiency = 1, bool forEditor = false)
+        private static bool PopulateOutputWithOverride(Recycler recycler, IngredientInfo[] customIngredientList, int recycleAmount, float recycleEfficiency = 1, bool forEditor = false)
         {
             var outputIsFull = false;
 
@@ -598,9 +591,7 @@ namespace Oxide.Plugins
 
         private static void Swap<T>(ref T a, ref T b)
         {
-            T temp = a;
-            a = b;
-            b = temp;
+            (a, b) = (b, a);
         }
 
         private static float GetRecycleEfficiency(Recycler recycler)
@@ -615,14 +606,12 @@ namespace Oxide.Plugins
 
         private static bool RecyclableWasBlocked(Item item, Recycler recycler)
         {
-            var hookResult = ExposedHooks.OnRecycleManagerItemRecyclable(item, recycler);
-            return hookResult is bool && (bool)hookResult == false;
+            return ExposedHooks.OnRecycleManagerItemRecyclable(item, recycler) is false;
         }
 
         private static bool RecycleItemWasBlocked(Item item, Recycler recycler)
         {
-            var hookResult = ExposedHooks.OnRecycleManagerRecycle(item, recycler);
-            return hookResult is bool && (bool)hookResult == false;
+            return ExposedHooks.OnRecycleManagerRecycle(item, recycler) is false;
         }
 
         private static Item CreateItem(ItemDefinition itemDefinition, int amount, ulong skinId, string displayName = null)
@@ -761,10 +750,12 @@ namespace Oxide.Plugins
             public const string AnchorTopLeft = "0 1";
             public const string AnchorTopRight = "1 1";
 
-            public static LayoutProvider Once(float width = 0, float height = 0) =>
-                _reusable.WithOffset().WithDimensions(width, height).WithOptions(0).WithSpacing(0);
+            public static LayoutProvider Once(float width = 0, float height = 0)
+            {
+                return _reusable.WithOffset().WithDimensions(width, height).WithOptions(0).WithSpacing(0);
+            }
 
-            private static LayoutProvider _reusable = new LayoutProvider(0, 0);
+            private static LayoutProvider _reusable = new(0, 0);
 
             private LayoutOptions _options;
             private string _anchor;
@@ -928,20 +919,20 @@ namespace Oxide.Plugins
             private const string TextColor = "0.8 0.8 0.8 1";
             private const string BackgroundColor = "0.25 0.25 0.25 1";
 
-            private static ButtonColorScheme DefaultButtonColorScheme = new ButtonColorScheme
+            private static ButtonColorScheme DefaultButtonColorScheme = new()
             {
                 Active = new ButtonColor("0.25 0.5 0.75 1", "0.75 0.85 1 1"),
                 Enabled = new ButtonColor("0.4 0.4 0.4 1", "0.71 0.71 0.71 1"),
                 Disabled = new ButtonColor("0.4 0.4 0.4 0.5", "0.71 0.71 0.71 0.5"),
             };
 
-            private static ButtonColorScheme SaveButtonColorScheme = new ButtonColorScheme
+            private static ButtonColorScheme SaveButtonColorScheme = new()
             {
                 Enabled = new ButtonColor("0.451 0.553 0.271 1", "0.659 0.918 0.2 1"),
                 Disabled = new ButtonColor("0.451 0.553 0.271 0.5", "0.659 0.918 0.2 0.5"),
             };
 
-            private static ButtonColorScheme ResetButtonColorScheme = new ButtonColorScheme
+            private static ButtonColorScheme ResetButtonColorScheme = new()
             {
                 Enabled = new ButtonColor("0.9 0.5 0.2 1", "1 0.9 0.7 1"),
                 Disabled = new ButtonColor("0.9 0.5 0.2 0.25", "1 0.9 0.7 0.25"),
@@ -987,24 +978,22 @@ namespace Oxide.Plugins
 
                 return new CuiElementContainer
                 {
+                    new CuiElementRecreate
                     {
-                        new CuiElementRecreate
+                        Parent = "Hud.Menu",
+                        Name = UIName,
+                        DestroyUi = UIName,
+                        Components =
                         {
-                            Parent = "Hud.Menu",
-                            Name = UIName,
-                            DestroyUi = UIName,
-                            Components =
+                            new CuiRectTransformComponent
                             {
-                                new CuiRectTransformComponent
-                                {
-                                    AnchorMin = AnchorMin,
-                                    AnchorMax = AnchorMax,
-                                    OffsetMin = $"{offsetX} {offsetY}",
-                                    OffsetMax = $"{offsetX} {offsetY}",
-                                }
-                            }
-                        }
-                    }
+                                AnchorMin = AnchorMin,
+                                AnchorMax = AnchorMax,
+                                OffsetMin = $"{offsetX} {offsetY}",
+                                OffsetMax = $"{offsetX} {offsetY}",
+                            },
+                        },
+                    },
                 };
             }
 
@@ -1082,7 +1071,7 @@ namespace Oxide.Plugins
                             OffsetMin = $"5 {offsetY}",
                             OffsetMax = $"{5 + PanelWidth} {offsetY + HeaderHeight}",
                         },
-                    }
+                    },
                 });
 
                 var buttonWidth = 80f;
@@ -1156,7 +1145,7 @@ namespace Oxide.Plugins
                                 AnchorMin = "0 0",
                                 AnchorMax = "1 1",
                             },
-                        }
+                        },
                     });
                     return;
                 }
@@ -1182,7 +1171,7 @@ namespace Oxide.Plugins
                                 AnchorMin = "0 0",
                                 AnchorMax = "1 1",
                             },
-                        }
+                        },
                     });
                     return;
                 }
@@ -1284,7 +1273,7 @@ namespace Oxide.Plugins
                         AnchorMax = layoutProvider.AnchorMax,
                         OffsetMin = layoutProvider.OffsetMin,
                         OffsetMax = layoutProvider.OffsetMax,
-                    }
+                    },
                 }, parent);
             }
 
@@ -1316,7 +1305,7 @@ namespace Oxide.Plugins
                             Color = TextColor,
                         },
                         layoutProvider.Next().GetRectTransform(),
-                    }
+                    },
                 });
 
                 AddButton(elements,
@@ -1375,7 +1364,7 @@ namespace Oxide.Plugins
                             Color = TextColor,
                         },
                         layoutProvider.Next().GetRectTransform(),
-                    }
+                    },
                 });
 
                 AddButton(elements,
@@ -1432,7 +1421,7 @@ namespace Oxide.Plugins
                             Color = TextColor,
                         },
                         layoutProvider.Next().GetRectTransform(),
-                    }
+                    },
                 });
 
                 AddButton(elements,
@@ -1621,8 +1610,7 @@ namespace Oxide.Plugins
                 if (commandTypeArg == null)
                     return;
 
-                UICommand uiCommand;
-                if (!Enum.TryParse(commandTypeArg, ignoreCase: true, result: out uiCommand))
+                if (!Enum.TryParse(commandTypeArg, ignoreCase: true, result: out UICommand uiCommand))
                     return;
 
                 switch (uiCommand)
@@ -1699,12 +1687,10 @@ namespace Oxide.Plugins
                         if (slotArg == null || amountArg == null)
                             break;
 
-                        int slot;
-                        if (!int.TryParse(slotArg, out slot) || slot < 0 || slot > 5)
+                        if (!int.TryParse(slotArg, out var slot) || slot < 0 || slot > 5)
                             break;
 
-                        float chance;
-                        if (!float.TryParse(amountArg, out chance))
+                        if (!float.TryParse(amountArg, out var chance))
                         {
                             DrawUI();
                             break;
@@ -1731,8 +1717,7 @@ namespace Oxide.Plugins
                         if (allowedArg == null)
                             break;
 
-                        OutputType outputType;
-                        if (!Enum.TryParse(allowedArg, out outputType))
+                        if (!Enum.TryParse(allowedArg, out OutputType outputType))
                             break;
 
                         if (outputType == _editState.OutputType)
@@ -1760,8 +1745,7 @@ namespace Oxide.Plugins
                         if (identifyTypeArg == null)
                             break;
 
-                        IdentificationType identificationType;
-                        if (!Enum.TryParse(identifyTypeArg, ignoreCase: true, result: out identificationType))
+                        if (!Enum.TryParse(identifyTypeArg, ignoreCase: true, result: out IdentificationType identificationType))
                             break;
 
                         if (_editState.IdentificationType == identificationType)
@@ -1797,7 +1781,7 @@ namespace Oxide.Plugins
                     return GetOutput(IdentificationType.Item, DetermineBestOutputType(IdentificationType.Item));
 
                 if (IsVanillaRecyclable(_editState.InputItem))
-                    return _plugin.GetVanillaOutput(_editState.InputItem.info);
+                    return GetVanillaOutput(_editState.InputItem.info);
 
                 return null;
             }
@@ -1814,7 +1798,7 @@ namespace Oxide.Plugins
                     return;
                 }
 
-                _plugin.PopulateOutputWithOverride(_recycler, output, 1, forEditor: true);
+                PopulateOutputWithOverride(_recycler, output, 1, forEditor: true);
                 _pauseAutoChangeOutput = true;
 
                 for (var i = 0; i < _editState.Chances.Length; i++)
@@ -1822,7 +1806,7 @@ namespace Oxide.Plugins
                     _editState.Chances[i] = 0;
 
                     var customIngredient = output.ElementAtOrDefault(i);
-                    if (customIngredient != null && customIngredient.Amount <= 1)
+                    if (customIngredient is { Amount: <= 1 })
                     {
                         _editState.Chances[i] = customIngredient.Amount * 100f;
                     }
@@ -1885,9 +1869,8 @@ namespace Oxide.Plugins
                 if (IsDisallowed())
                     return false;
 
-                var hookResult = _plugin.CallCanBeRecycled(item, _recycler);
-                if (hookResult is bool)
-                    return (bool)hookResult;
+                if (_plugin.CallCanBeRecycled(item, _recycler) is bool result)
+                    return result;
 
                 if (GetOverride() != null)
                     return true;
@@ -2030,8 +2013,7 @@ namespace Oxide.Plugins
                 RemoveExcessInput(_editState.InputItem);
                 RemoveOutputItems();
 
-                var hookResult = _plugin.CallCanBeRecycled(_editState.InputItem, _recycler);
-                if (hookResult is bool && !(bool)hookResult)
+                if (_plugin.CallCanBeRecycled(_editState.InputItem, _recycler) is false)
                 {
                     _editState.BlockedByAnotherPlugin = true;
                     DrawUI();
@@ -2143,8 +2125,8 @@ namespace Oxide.Plugins
         private class RecycleEditManager
         {
             private RecycleManager _plugin;
-            private Dictionary<Recycler, EditController> _controllers = new Dictionary<Recycler, EditController>();
-            private Dictionary<BasePlayer, EditController> _playerControllers = new Dictionary<BasePlayer, EditController>();
+            private Dictionary<Recycler, EditController> _controllers = new();
+            private Dictionary<BasePlayer, EditController> _playerControllers = new();
 
             public RecycleEditManager(RecycleManager plugin)
             {
@@ -2160,8 +2142,7 @@ namespace Oxide.Plugins
 
             public EditController GetController(BasePlayer player)
             {
-                EditController editController;
-                return _playerControllers.TryGetValue(player, out editController)
+                return _playerControllers.TryGetValue(player, out var editController)
                     ? editController
                     : null;
             }
@@ -2198,8 +2179,7 @@ namespace Oxide.Plugins
 
             private EditController GetController(Recycler recycler)
             {
-                EditController editController;
-                return _controllers.TryGetValue(recycler, out editController)
+                return _controllers.TryGetValue(recycler, out var editController)
                     ? editController
                     : null;
             }
@@ -2340,7 +2320,7 @@ namespace Oxide.Plugins
         private class RecycleComponentManager
         {
             private RecycleManager _plugin;
-            private readonly Dictionary<Recycler, RecyclerComponent> _recyclerComponents = new Dictionary<Recycler, RecyclerComponent>();
+            private readonly Dictionary<Recycler, RecyclerComponent> _recyclerComponents = new();
 
             public void Init(RecycleManager plugin)
             {
@@ -2367,12 +2347,12 @@ namespace Oxide.Plugins
 
             private RecyclerComponent EnsureRecyclerComponent(Recycler recycler)
             {
-                RecyclerComponent recyclerComponent;
-                if (!_recyclerComponents.TryGetValue(recycler, out recyclerComponent))
+                if (!_recyclerComponents.TryGetValue(recycler, out var recyclerComponent))
                 {
                     recyclerComponent = RecyclerComponent.AddToRecycler(_plugin, this, recycler);
                     _recyclerComponents[recycler] = recyclerComponent;
                 }
+
                 return recyclerComponent;
             }
         }
@@ -2405,7 +2385,7 @@ namespace Oxide.Plugins
             public string PermissionSuffix;
 
             [JsonProperty("Recycle time (seconds)")]
-            private float RecycleTime { set { TimeMultiplier = value / 5f; } }
+            private float RecycleTime { set => TimeMultiplier = value / 5f; }
 
             [JsonProperty("Recycle time multiplier")]
             public float TimeMultiplier = 1;
@@ -2433,23 +2413,23 @@ namespace Oxide.Plugins
             public float DefaultRecycleTime = 5;
 
             [JsonProperty("Recycle time (seconds)")]
-            private float DeprecatedRecycleTime { set { DefaultRecycleTime = value; } }
+            private float DeprecatedRecycleTime { set => DefaultRecycleTime = value; }
 
             [JsonProperty("Recycle time multiplier while in safe zone")]
             public float SafeZoneTimeMultiplier = 1;
 
             [JsonProperty("Recycle time multiplier by item short name (item: multiplier)")]
-            public Dictionary<string, float> TimeMultiplierByShortName = new Dictionary<string, float>();
+            public Dictionary<string, float> TimeMultiplierByShortName = new();
 
             [JsonProperty("Recycle time multiplier by permission")]
-            public PermissionSpeedProfile[] PermissionSpeedProfiles = new PermissionSpeedProfile[]
+            public PermissionSpeedProfile[] PermissionSpeedProfiles =
             {
-                new PermissionSpeedProfile
+                new()
                 {
                     PermissionSuffix = "fast",
                     TimeMultiplier = 0.2f,
                 },
-                new PermissionSpeedProfile
+                new()
                 {
                     PermissionSuffix = "instant",
                     TimeMultiplier = 0,
@@ -2457,14 +2437,13 @@ namespace Oxide.Plugins
             };
 
             [JsonProperty("Speeds requiring permission")]
-            private PermissionSpeedProfile[] DeprecatedSpeedsRequiringPermission
-            { set { PermissionSpeedProfiles = value; } }
+            private PermissionSpeedProfile[] DeprecatedSpeedsRequiringPermission { set => PermissionSpeedProfiles = value; }
 
             [JsonIgnore]
             private Permission _permission;
 
             [JsonIgnore]
-            private Dictionary<int, float> _timeMultiplierByItemId = new Dictionary<int, float>();
+            private Dictionary<int, float> _timeMultiplierByItemId = new();
 
             [JsonIgnore]
             public bool EnableIncrementalRecycling;
@@ -2478,9 +2457,8 @@ namespace Oxide.Plugins
                     speedProfile.Init(plugin);
                 }
 
-                foreach (var entry in TimeMultiplierByShortName)
+                foreach (var (itemShortName, timeMultiplier) in TimeMultiplierByShortName)
                 {
-                    var itemShortName = entry.Key;
                     var itemDefinition = ItemManager.FindItemDefinition(itemShortName);
                     if (itemDefinition == null)
                     {
@@ -2488,10 +2466,10 @@ namespace Oxide.Plugins
                         continue;
                     }
 
-                    if (entry.Value == 1)
+                    if (timeMultiplier == 1)
                         continue;
 
-                    _timeMultiplierByItemId[itemDefinition.itemid] = entry.Value;
+                    _timeMultiplierByItemId[itemDefinition.itemid] = timeMultiplier;
                     EnableIncrementalRecycling = true;
                 }
             }
@@ -2513,8 +2491,7 @@ namespace Oxide.Plugins
 
             public float GetTimeMultiplierForItem(Item item)
             {
-                float time;
-                if (_timeMultiplierByItemId.TryGetValue(item.info.itemid, out time))
+                if (_timeMultiplierByItemId.TryGetValue(item.info.itemid, out var time))
                     return time;
 
                 return 1;
@@ -2528,22 +2505,21 @@ namespace Oxide.Plugins
             public float DefaultPercent = 10f;
 
             [JsonProperty("Percent by input item short name")]
-            public Dictionary<string, float> PercentByShortName = new Dictionary<string, float>();
+            public Dictionary<string, float> PercentByShortName = new();
 
             [JsonProperty("Percent by input item skin ID")]
-            public Dictionary<ulong, float> PercentBySkinId = new Dictionary<ulong, float>();
+            public Dictionary<ulong, float> PercentBySkinId = new();
 
             [JsonProperty("Percent by input item display name (custom items)")]
-            public CaseInsensitiveDictionary<float> PercentByDisplayName = new CaseInsensitiveDictionary<float>();
+            public CaseInsensitiveDictionary<float> PercentByDisplayName = new();
 
             [JsonIgnore]
-            private Dictionary<int, float> PercentByItemId = new Dictionary<int, float>();
+            private Dictionary<int, float> PercentByItemId = new();
 
             public void Init()
             {
-                foreach (var entry in PercentByShortName)
+                foreach (var (shortName, percent) in PercentByShortName)
                 {
-                    var shortName = entry.Key;
                     if (string.IsNullOrWhiteSpace(shortName))
                         continue;
 
@@ -2554,14 +2530,13 @@ namespace Oxide.Plugins
                         continue;
                     }
 
-                    PercentByItemId[itemDefinition.itemid] = entry.Value;
+                    PercentByItemId[itemDefinition.itemid] = percent;
                 }
             }
 
             public float GetPercent(Item item)
             {
-                float multiplier;
-                if (!string.IsNullOrWhiteSpace(item.name) && PercentByDisplayName.TryGetValue(item.name, out multiplier))
+                if (!string.IsNullOrWhiteSpace(item.name) && PercentByDisplayName.TryGetValue(item.name, out var multiplier))
                     return multiplier;
 
                 if (item.skin != 0 && PercentBySkinId.TryGetValue(item.skin, out multiplier))
@@ -2581,10 +2556,10 @@ namespace Oxide.Plugins
             public float DefaultMultiplier = 1f;
 
             [JsonProperty("Multiplier by output item short name")]
-            public Dictionary<string, float> MultiplierByOutputShortName = new Dictionary<string, float>();
+            public Dictionary<string, float> MultiplierByOutputShortName = new();
 
             [JsonIgnore]
-            private Dictionary<int, float> MultiplierByOutputItemId = new Dictionary<int, float>();
+            private Dictionary<int, float> MultiplierByOutputItemId = new();
 
             public void Init()
             {
@@ -2607,8 +2582,7 @@ namespace Oxide.Plugins
 
             public float GetOutputMultiplier(int itemId)
             {
-                float multiplier;
-                if (MultiplierByOutputItemId.TryGetValue(itemId, out multiplier))
+                if (MultiplierByOutputItemId.TryGetValue(itemId, out var multiplier))
                     return multiplier;
 
                 return DefaultMultiplier;
@@ -2666,22 +2640,21 @@ namespace Oxide.Plugins
         private class OverrideOutput
         {
             [JsonProperty("Override output by input item short name")]
-            public Dictionary<string, IngredientInfo[]> OverrideOutputByShortName = new Dictionary<string, IngredientInfo[]>();
+            public Dictionary<string, IngredientInfo[]> OverrideOutputByShortName = new();
 
             [JsonProperty("Override output by input item skin ID")]
-            public Dictionary<ulong, IngredientInfo[]> OverrideOutputBySkinId = new Dictionary<ulong, IngredientInfo[]>();
+            public Dictionary<ulong, IngredientInfo[]> OverrideOutputBySkinId = new();
 
             [JsonProperty("Override output by input item display name (custom items)")]
-            public CaseInsensitiveDictionary<IngredientInfo[]> OverrideOutputByDisplayName = new CaseInsensitiveDictionary<IngredientInfo[]>();
+            public CaseInsensitiveDictionary<IngredientInfo[]> OverrideOutputByDisplayName = new();
 
             [JsonIgnore]
-            private Dictionary<int, IngredientInfo[]> OverrideOutputByItemId = new Dictionary<int, IngredientInfo[]>();
+            private Dictionary<int, IngredientInfo[]> OverrideOutputByItemId = new();
 
             public void Init()
             {
-                foreach (var entry in OverrideOutputByShortName)
+                foreach (var (shortName, ingredientInfoList) in OverrideOutputByShortName)
                 {
-                    var shortName = entry.Key;
                     if (string.IsNullOrWhiteSpace(shortName))
                         continue;
 
@@ -2692,7 +2665,6 @@ namespace Oxide.Plugins
                         continue;
                     }
 
-                    var ingredientInfoList = entry.Value;
                     foreach (var ingredientInfo in ingredientInfoList)
                     {
                         ingredientInfo.Init();
@@ -2744,8 +2716,7 @@ namespace Oxide.Plugins
 
             public IngredientInfo[] GetBestOverride(Item item)
             {
-                IngredientInfo[] ingredientInfoList;
-                if (!string.IsNullOrWhiteSpace(item.name) && OverrideOutputByDisplayName.TryGetValue(item.name, out ingredientInfoList))
+                if (!string.IsNullOrWhiteSpace(item.name) && OverrideOutputByDisplayName.TryGetValue(item.name, out var ingredientInfoList))
                     return ingredientInfoList;
 
                 if (item.skin != 0 && OverrideOutputBySkinId.TryGetValue(item.skin, out ingredientInfoList))
@@ -2805,7 +2776,7 @@ namespace Oxide.Plugins
 
             public void ResetOverride(RecycleManager plugin,ItemDefinition itemDefinition)
             {
-                var ingredients = plugin.GetVanillaOutput(itemDefinition);
+                var ingredients = GetVanillaOutput(itemDefinition);
 
                 OverrideOutputByShortName[itemDefinition.shortname] = ingredients;
                 OverrideOutputByItemId[itemDefinition.itemid] = ingredients;
@@ -2816,16 +2787,16 @@ namespace Oxide.Plugins
         private class RestrictedInputItems
         {
             [JsonProperty("Item short names")]
-            public CaseInsensitiveHashSet DisallowedInputShortNames = new CaseInsensitiveHashSet();
+            public CaseInsensitiveHashSet DisallowedInputShortNames = new();
 
             [JsonProperty("Item skin IDs")]
-            public HashSet<ulong> DisallowedInputSkinIds = new HashSet<ulong>();
+            public HashSet<ulong> DisallowedInputSkinIds = new();
 
             [JsonProperty("Item display names (custom items)")]
-            public CaseInsensitiveHashSet DisallowedInputDisplayNames = new CaseInsensitiveHashSet();
+            public CaseInsensitiveHashSet DisallowedInputDisplayNames = new();
 
             [JsonIgnore]
-            private HashSet<int> DisallowedInputItemIds = new HashSet<int>();
+            private HashSet<int> DisallowedInputItemIds = new();
 
             public void Init()
             {
@@ -2914,22 +2885,22 @@ namespace Oxide.Plugins
         private class Configuration : BaseConfiguration
         {
             [JsonProperty("Edit UI")]
-            public EditUISettings EditUISettings = new EditUISettings();
+            public EditUISettings EditUISettings = new();
 
             [JsonProperty("Custom recycle speed")]
-            public RecycleSpeed RecycleSpeed = new RecycleSpeed();
+            public RecycleSpeed RecycleSpeed = new();
 
             [JsonProperty("Restricted input items")]
-            public RestrictedInputItems RestrictedInputItems = new RestrictedInputItems();
+            public RestrictedInputItems RestrictedInputItems = new();
 
             [JsonProperty("Max items in stack per recycle (% of max stack size)")]
-            public MaxItemsPerRecycle MaxItemsPerRecycle = new MaxItemsPerRecycle();
+            public MaxItemsPerRecycle MaxItemsPerRecycle = new();
 
             [JsonProperty("Output multipliers")]
-            public OutputMultiplierSettings OutputMultipliers = new OutputMultiplierSettings();
+            public OutputMultiplierSettings OutputMultipliers = new();
 
             [JsonProperty("Override output")]
-            public OverrideOutput OverrideOutput = new OverrideOutput();
+            public OverrideOutput OverrideOutput = new();
 
             [JsonProperty("Override output (before efficiency factor)")]
             private OverrideOutput DeprecatedOverrideOutput
@@ -2981,7 +2952,7 @@ namespace Oxide.Plugins
             }
         }
 
-        private Configuration GetDefaultConfig() => new Configuration();
+        private Configuration GetDefaultConfig() => new();
 
         #region Configuration Helpers
 
@@ -2989,7 +2960,7 @@ namespace Oxide.Plugins
         private class BaseConfiguration
         {
             [JsonIgnore]
-            public bool UsingDefaults = false;
+            public bool UsingDefaults;
 
             public string ToJson() => JsonConvert.SerializeObject(this);
 
@@ -3027,17 +2998,14 @@ namespace Oxide.Plugins
 
         private bool MaybeUpdateConfigSection(Dictionary<string, object> currentWithDefaults, Dictionary<string, object> currentRaw)
         {
-            bool changed = false;
+            var changed = false;
 
             foreach (var key in currentWithDefaults.Keys)
             {
-                object currentRawValue;
-                if (currentRaw.TryGetValue(key, out currentRawValue))
+                if (currentRaw.TryGetValue(key, out var currentRawValue))
                 {
-                    var defaultDictValue = currentWithDefaults[key] as Dictionary<string, object>;
                     var currentDictValue = currentRawValue as Dictionary<string, object>;
-
-                    if (defaultDictValue != null)
+                    if (currentWithDefaults[key] is Dictionary<string, object> defaultDictValue)
                     {
                         if (currentDictValue == null)
                         {
@@ -3100,39 +3068,39 @@ namespace Oxide.Plugins
 
         private class LangEntry
         {
-            public static List<LangEntry> AllLangEntries = new List<LangEntry>();
+            public static List<LangEntry> AllLangEntries = new();
 
-            public static readonly LangEntry ErrorNoPermission = new LangEntry("Error.NoPermission", "You don't have permission to do that.");
-            public static readonly LangEntry ErrorConfig = new LangEntry("Error.Config", "Error: The config did not load correctly. Please fix the config and reload the plugin before running this command.");
-            public static readonly LangEntry ErrorInvalidItem = new LangEntry("Error.InvalidItem", "Error: Invalid item: <color=#fe0>{0}</color>");
+            public static readonly LangEntry ErrorNoPermission = new("Error.NoPermission", "You don't have permission to do that.");
+            public static readonly LangEntry ErrorConfig = new("Error.Config", "Error: The config did not load correctly. Please fix the config and reload the plugin before running this command.");
+            public static readonly LangEntry ErrorInvalidItem = new("Error.InvalidItem", "Error: Invalid item: <color=#fe0>{0}</color>");
 
-            public static readonly LangEntry ItemSyntax = new LangEntry("Item.Syntax", "Syntax: <color=#fe0>{0} <item id or short name></color>");
+            public static readonly LangEntry ItemSyntax = new("Item.Syntax", "Syntax: <color=#fe0>{0} <item id or short name></color>");
 
-            public static readonly LangEntry AddExists = new LangEntry("Add.Exists", "Error: Item <color=#fe0>{0}</color> is already in the config. To reset that item to vanilla output, use <color=#fe0>recyclemanager.reset {0}</color>.");
-            public static readonly LangEntry AddSuccess = new LangEntry("Add.Success", "Successfully added item <color=#fe0>{0}</color> to the config.");
+            public static readonly LangEntry AddExists = new("Add.Exists", "Error: Item <color=#fe0>{0}</color> is already in the config. To reset that item to vanilla output, use <color=#fe0>recyclemanager.reset {0}</color>.");
+            public static readonly LangEntry AddSuccess = new("Add.Success", "Successfully added item <color=#fe0>{0}</color> to the config.");
 
-            public static readonly LangEntry ResetSuccess = new LangEntry("Reset.Success", "Successfully reset item <color=#fe0>{0}</color> in the config.");
+            public static readonly LangEntry ResetSuccess = new("Reset.Success", "Successfully reset item <color=#fe0>{0}</color> in the config.");
 
-            public static readonly LangEntry UIButtonAdmin = new LangEntry("UI.Button.Admin", "Admin");
-            public static readonly LangEntry UIHeader = new LangEntry("UI.Header", "Recycle Manager");
-            public static readonly LangEntry UIButtonClose = new LangEntry("UI.Button.Close", "Close");
-            public static readonly LangEntry UIEmptyState = new LangEntry("UI.EmptyState", "Place an item into the recycler to preview and edit its output");
-            public static readonly LangEntry UIItemBlocked = new LangEntry("UI.ItemBlocked", "That item is blocked by another plugin");
+            public static readonly LangEntry UIButtonAdmin = new("UI.Button.Admin", "Admin");
+            public static readonly LangEntry UIHeader = new("UI.Header", "Recycle Manager");
+            public static readonly LangEntry UIButtonClose = new("UI.Button.Close", "Close");
+            public static readonly LangEntry UIEmptyState = new("UI.EmptyState", "Place an item into the recycler to preview and edit its output");
+            public static readonly LangEntry UIItemBlocked = new("UI.ItemBlocked", "That item is blocked by another plugin");
 
-            public static readonly LangEntry UILabelConfigureBy = new LangEntry("UI.Label.ConfigureBy", "Configure by:");
-            public static readonly LangEntry UIButtonItem = new LangEntry("UI.Button.Item", "Item");
-            public static readonly LangEntry UIButtonSkin = new LangEntry("UI.Button.Skin", "Skin");
-            public static readonly LangEntry UIButtonDisplayName = new LangEntry("UI.Button.DisplayName", "Display name");
+            public static readonly LangEntry UILabelConfigureBy = new("UI.Label.ConfigureBy", "Configure by:");
+            public static readonly LangEntry UIButtonItem = new("UI.Button.Item", "Item");
+            public static readonly LangEntry UIButtonSkin = new("UI.Button.Skin", "Skin");
+            public static readonly LangEntry UIButtonDisplayName = new("UI.Button.DisplayName", "Display name");
 
-            public static readonly LangEntry UILabelOutput = new LangEntry("UI.Label.Output", "Output:");
-            public static readonly LangEntry UIButtonNotRecyclable = new LangEntry("UI.Button.NotRecyclable", "Not recyclable");
-            public static readonly LangEntry UIButtonDefaultOutput = new LangEntry("UI.Button.DefaultOutput", "Default output");
-            public static readonly LangEntry UIButtonCustomOutput = new LangEntry("UI.Button.CustomOutput", "Custom output");
+            public static readonly LangEntry UILabelOutput = new("UI.Label.Output", "Output:");
+            public static readonly LangEntry UIButtonNotRecyclable = new("UI.Button.NotRecyclable", "Not recyclable");
+            public static readonly LangEntry UIButtonDefaultOutput = new("UI.Button.DefaultOutput", "Default output");
+            public static readonly LangEntry UIButtonCustomOutput = new("UI.Button.CustomOutput", "Custom output");
 
-            public static readonly LangEntry UILabelActions = new LangEntry("UI.Label,Actions", "Actions:");
-            public static readonly LangEntry UIButtonSave = new LangEntry("UI.Button.Save", "Save");
-            public static readonly LangEntry UIButtonReset = new LangEntry("UI.Button.Reset", "Reset");
-            public static readonly LangEntry UIButtonCancel = new LangEntry("UI.Button.Cancel", "Cancel");
+            public static readonly LangEntry UILabelActions = new("UI.Label,Actions", "Actions:");
+            public static readonly LangEntry UIButtonSave = new("UI.Button.Save", "Save");
+            public static readonly LangEntry UIButtonReset = new("UI.Button.Reset", "Reset");
+            public static readonly LangEntry UIButtonCancel = new("UI.Button.Cancel", "Cancel");
 
             public string Name;
             public string English;
@@ -3233,8 +3201,7 @@ namespace Oxide.Plugins
 
             private static void AssertItemInContainer(ItemContainer container, int slot, string shortName, int amount)
             {
-                Item item;
-                AssertItemInSlot(container, slot, out item);
+                AssertItemInSlot(container, slot, out var item);
                 AssertItemShortName(item, shortName);
                 AssertItemAmount(item, amount);
             }
@@ -3253,15 +3220,6 @@ namespace Oxide.Plugins
                     throw new Exception($"Failed to move item '{shortName}' to container.");
 
                 return item;
-            }
-
-            private static void AssertSubscribed(PluginManager pluginManager, Plugin plugin, string hookName, bool subscribed = true)
-            {
-                var hookSubscribers = GetHookSubscribers(pluginManager, hookName);
-                if (hookSubscribers == null)
-                    return;
-
-                Assert(hookSubscribers.Contains(plugin) == subscribed);
             }
 
             private static Action SetMaxStackSize(string shortName, int amount)
@@ -3308,8 +3266,7 @@ namespace Oxide.Plugins
             {
                 var registeredPermissionsField = typeof(Permission).GetField("registeredPermissions", BindingFlags.Instance | BindingFlags.NonPublic);
                 var permissionsMap = (Dictionary<Plugin, HashSet<string>>)registeredPermissionsField.GetValue(_plugin.permission);
-                HashSet<string> permissionList;
-                return permissionsMap.TryGetValue(_plugin, out permissionList)
+                return permissionsMap.TryGetValue(_plugin, out var permissionList)
                     ? permissionList
                     : null;
             }
@@ -3337,22 +3294,6 @@ namespace Oxide.Plugins
                 {
                     _plugin.permission.RevokeUserPermission(_player.UserIDString, perm);
                 }
-            }
-
-            private static IList<Plugin> GetHookSubscribers(PluginManager pluginManager, string hookName)
-            {
-                var hookSubscriptionsField = typeof(PluginManager).GetField("hookSubscriptions", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (hookSubscriptionsField == null)
-                    return null;
-
-                var hookSubscriptions = hookSubscriptionsField.GetValue(pluginManager) as IDictionary<string, IList<Plugin>>;
-                if (hookSubscriptions == null)
-                    return null;
-
-                IList<Plugin> pluginList;
-                return hookSubscriptions.TryGetValue(hookName, out pluginList)
-                    ? pluginList
-                    : null;
             }
 
             [TestMethod("Given rope is restricted, it should not be allowed in recyclers")]
@@ -3391,7 +3332,6 @@ namespace Oxide.Plugins
                     },
                 });
 
-                AssertSubscribed(_plugin.plugins.PluginManager, _plugin, nameof(OnRecyclerToggle), subscribed: false);
                 var gears = AddItemToContainer(_recycler.inventory, "gears");
                 _recycler.StartRecycling();
 
@@ -3434,7 +3374,7 @@ namespace Oxide.Plugins
                         DefaultRecycleTime = 3,
                         PermissionSpeedProfiles = new PermissionSpeedProfile[]
                         {
-                            new PermissionSpeedProfile { PermissionSuffix = "fast", TimeMultiplier = 0.1f },
+                            new() { PermissionSuffix = "fast", TimeMultiplier = 0.1f },
                         },
                     },
                 });
@@ -3570,7 +3510,7 @@ namespace Oxide.Plugins
                         PercentByShortName = new Dictionary<string, float>
                         {
                             ["gears"] = 50,
-                        }
+                        },
                     },
                 });
 
@@ -3607,7 +3547,7 @@ namespace Oxide.Plugins
                         DefaultMultiplier = 2,
                         MultiplierByOutputShortName = new Dictionary<string, float>
                         {
-                            ["scrap"] = 3f
+                            ["scrap"] = 3f,
                         },
                     },
                 });
@@ -3646,7 +3586,7 @@ namespace Oxide.Plugins
                         {
                             ["gears"] = new IngredientInfo[]
                             {
-                                new IngredientInfo
+                                new()
                                 {
                                     ShortName = "wood",
                                     Amount = 50,
@@ -3668,8 +3608,7 @@ namespace Oxide.Plugins
                 yield return new WaitForSeconds(0.11f);
                 AssertItemAmount(gears, 0);
 
-                Item outputItem;
-                AssertItemInSlot(_recycler.inventory, 6, out outputItem);
+                AssertItemInSlot(_recycler.inventory, 6, out var outputItem);
                 AssertItemShortName(outputItem, "wood");
                 AssertItemSkin(outputItem, 123456);
                 AssertItemDisplayName(outputItem, "Vood");
@@ -3739,7 +3678,7 @@ namespace Oxide.Plugins
 
             public bool IsRunning { get; private set; }
 
-            private List<TestInfo> _testInfoList = new List<TestInfo>();
+            private List<TestInfo> _testInfoList = new();
             private Coroutine _coroutine;
 
             protected virtual void BeforeAll() {}
@@ -3759,8 +3698,7 @@ namespace Oxide.Plugins
 
                 foreach (var methodInfo in GetType().GetMethods())
                 {
-                    var testMethodAttribute = methodInfo.GetCustomAttributes(typeof(TestMethodAttribute), true).FirstOrDefault() as TestMethodAttribute;
-                    if (testMethodAttribute == null)
+                    if (methodInfo.GetCustomAttributes(typeof(TestMethodAttribute), true).FirstOrDefault() is not TestMethodAttribute testMethodAttribute)
                         continue;
 
                     var isAsync = methodInfo.ReturnType == typeof(IEnumerator);
@@ -3926,8 +3864,7 @@ namespace Oxide.Plugins
                     if (!TryRunBeforeEach())
                         return false;
 
-                    List<Action> cleanupActions;
-                    var args = CreateTestArguments(testInfo.MethodInfo, out cleanupActions);
+                    var args = CreateTestArguments(testInfo.MethodInfo, out var cleanupActions);
 
                     try
                     {
@@ -3959,8 +3896,7 @@ namespace Oxide.Plugins
                     if (!TryRunBeforeEach())
                         break;
 
-                    List<Action> cleanupActions;
-                    var args = CreateTestArguments(testInfo.MethodInfo, out cleanupActions);
+                    var args = CreateTestArguments(testInfo.MethodInfo, out var cleanupActions);
 
                     IEnumerator enumerator;
 
