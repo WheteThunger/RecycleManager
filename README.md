@@ -55,6 +55,11 @@ Default configuration:
       }
     ]
   },
+  "Custom recycle efficiency": {
+    "Enabled": false,
+    "Default recycle efficiency": 0.6,
+    "Recycle efficiency while in safe zone": 0.4
+  },
   "Restricted input items": {
     "Item short names": [],
     "Item skin IDs": [],
@@ -87,7 +92,7 @@ Default configuration:
 
 - `Custom recycle speed` -- This section allows you to optionally customize recycler speed.
   - `Enabled` (`true` or `false`) -- While `true`, this plugin will override the recycling speed on all recyclers. While `false`, this plugin will not affect recycler speed. Default: `false`.
-    - Note: If other plugins want to cooperate with or override this behavior for specific recyclers or players, they can use the the `OnRecycleManagerSpeed` hook. 
+    - Note: If other plugins want to cooperate with or override this behavior for specific recyclers or players, they can use the `OnRecycleManagerSpeed` hook.
   - `Default recycle time (seconds)` -- This value determines how long (in seconds) recyclers will take to process each item. Vanilla equivalent is `5.0` seconds. Default: `5.0`.
   - `Recycle time multiplier while in safe zone` -- When a player starts a recycler while in a safe zone, recycle time will be multiplied by this value.
     - Example: `0.5` to double recycling speed in safe zones. Default: `1.0`.
@@ -103,6 +108,14 @@ Recycle time multiplier examples:
 - `0.2` = 5x speed
 - `0.1` = 10x speed
 - `0.0` = instant
+
+#### Recycler efficiency
+
+- `Custom recycle efficiency` -- This section allows you to override the efficiency of recyclers.
+  - `Enabled` (`true` or `false`) -- While `true`, this plugin will override the efficiency of all recyclers. While `false`, this plugin will use vanilla logic to determine recycler efficiency. Default: `false`.
+    - Note: If other plugins want to cooperate with or override this behavior for specific recyclers or players, they can use the `OnRecycleManagerEfficiency` hook, or set the vanilla `safezoneRecycleEfficiency` and `radtownRecycleEfficiency` properties of individual recyclers.
+  - `Default recycle efficiency` -- This value determines how efficient recyclers will be when processing items. For example, `1.0` will cause recyclers to output the full amount of ingredients used to craft them. Default: `0.6`.
+  - `Recycle efficiency while in safe zone` -- This value overrides `Default recycle efficiency` for recyclers that are in safe zones.
 
 #### Item restrictions
 
@@ -134,7 +147,7 @@ Recycle time multiplier examples:
 
 #### Custom output / custom recyclables
 
-- `Override output` -- This section allows you to override the output of specific items. This can be used to replace the output of items that are already recyclable in vanilla, as well as to allow custom items to be recycled. The output you configure here will **not** be affected by `Output multipliers`.
+- `Override output` -- This section allows you to override the output of specific items. This can be used to replace the output of items that are already recyclable in vanilla, as well as to allow custom items to be recycled. The output that you configure here will be subject to item condition, but not subject to recycler efficiency nor `Output multipliers`.
   - `Override output by input item short name` -- This section allows you to define what the recycler will output for specific items by item short name. The output includes the following options.
     - `Item short name` -- The short name name of the output item.
     - `Item skin ID` -- The *optional* skin ID of the output item.
@@ -168,6 +181,11 @@ Recycle time multiplier examples:
         "Recycle time multiplier": 0.0
       }
     ]
+  },
+  "Custom recycle efficiency": {
+    "Enabled": false,
+    "Default recycle efficiency": 0.6,
+    "Recycle efficiency while in safe zone": 0.4
   },
   "Restricted input items": {
     "Item short names": [
@@ -303,15 +321,27 @@ object OnRecycleManagerSpeed(Recycler recycler, BasePlayer player, float[] recyc
 
 ```cs
 // Example: Double recycle speed when a player starts their own personal recycler.
-object OnRecycleManagerSpeed(Recycler recycler, BasePlayer player, float[] recycleTime)
+void OnRecycleManagerSpeed(Recycler recycler, BasePlayer player, float[] recycleTime)
 {
     if (recycler.OwnerID == player.userID)
     {
         recycleTime[0] /= 2;
     }
-    return null;
 }
 ```
+
+#### OnRecycleManagerEfficiency
+
+```cs
+void OnRecycleManagerEfficiency(Recycler recycler, BasePlayer player, float[] recycleEfficiency)
+```
+
+- Called when an item is about to be recycled
+- The `recycleEfficiency` array has one item (at position `0`)
+  - The initial value will be from the `Custom recycler efficiency` section of the config if enabled, or else determined according to vanilla logic and the recycler location (`0.4` in safe zones, `0.6` outside)
+  - After this hook has been called on all subscribed plugins, Recycle Manager will use the recycler efficiency value in `recycleEfficiency[0]`
+  - If you want to alter the recycle efficiency, consider the current value and change it only if necessary
+- The `BasePlayer` argument is the last known player to have started the recycler, and may be `null` in some cases, especially if the recycler was started by another plugin
 
 #### OnRecycleManagerRecycle
 
