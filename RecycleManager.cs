@@ -7,6 +7,7 @@ using Oxide.Game.Rust.Cui;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Oxide.Core;
 using Oxide.Core.Libraries;
 using UnityEngine;
@@ -42,6 +43,8 @@ namespace Oxide.Plugins
         private readonly RecycleComponentManager _recycleComponentManager = new RecycleComponentManager();
         private readonly RecycleEditManager _recycleEditManager;
         private readonly float[] _recycleTime = new float[1];
+
+        private static readonly FieldInfo ScrapRemainderField = typeof(Recycler).GetField("scrapRemainder", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
         private bool IsEditUIEnabled => !_config.UsingDefaults && _config.EditUISettings.Enabled;
 
@@ -287,6 +290,33 @@ namespace Oxide.Plugins
 
         #endregion
 
+        #region Utilities
+
+        private readonly struct ReflectionAdapter<T>
+        {
+            private readonly FieldInfo _fieldInfo;
+            private readonly object _object;
+
+            public ReflectionAdapter(object obj, FieldInfo fieldInfo)
+            {
+                _object = obj;
+                _fieldInfo = fieldInfo;
+            }
+
+            public T Value
+            {
+                get => _fieldInfo == null ? default : (T)_fieldInfo.GetValue(_object);
+                set => _fieldInfo?.SetValue(_object, value);
+            }
+
+            public static implicit operator T(ReflectionAdapter<T> adapter)
+            {
+                return adapter.Value;
+            }
+        }
+
+        #endregion
+
         #region Helper Methods - Instance
 
         private bool VerifyHasPermission(IPlayer player, string perm)
@@ -441,7 +471,7 @@ namespace Oxide.Plugins
 
             if (item.amount > 1)
             {
-                recycleAmount = Mathf.CeilToInt(Mathf.Min(item.amount, item.info.stackable * maxItemsInStackFraction));
+                recycleAmount = Mathf.CeilToInt(Mathf.Min(item.amount, item.MaxStackable() * maxItemsInStackFraction));
 
                 // In case the configured multiplier is 0, ensure at least 1 item is recycled.
                 recycleAmount = Math.Max(recycleAmount, 1);
@@ -466,13 +496,18 @@ namespace Oxide.Plugins
                 if (ingredientInfo.ItemDefinition == null)
                     continue;
 
-                var ingredientAmount = ingredientInfo.Amount * recycleEfficiency;
+                var ingredientAmount = ingredientInfo.Amount;
                 if (ingredientAmount <= 0)
                     continue;
 
-                var outputAmount = CalculateOutputAmount(recycleAmount, ingredientAmount, forEditor: forEditor);
+                var outputAmount = CalculateOutputAmount(recycleAmount, ingredientAmount, recycleEfficiency);
                 if (outputAmount <= 0)
                     continue;
+
+                if (forEditor && outputAmount < 1)
+                {
+                    outputAmount = 1;
+                }
 
                 if (AddItemToRecyclerOutput(recycler, ingredientInfo.ItemDefinition, outputAmount, ingredientInfo.SkinId, ingredientInfo.DisplayName))
                 {
@@ -483,25 +518,43 @@ namespace Oxide.Plugins
             return outputIsFull;
         }
 
-        private static bool PopulateOutputVanilla(Configuration config, Recycler recycler, Item item, int recycleAmount, float recycleEfficiency = RecycleEfficiency, bool forEditor = false)
+        private static bool PopulateOutputVanilla(Configuration config, Recycler recycler, Item item, int recycleAmount, float recycleEfficiency)
         {
             var outputIsFull = false;
 
             if (item.info.Blueprint.scrapFromRecycle > 0)
             {
                 var scrapOutputMultiplier = config.OutputMultipliers.GetOutputMultiplier(ScrapItemId);
+                var scrapAmountDecimal = item.info.Blueprint.scrapFromRecycle * (float)recycleAmount * scrapOutputMultiplier;
 
-                var scrapAmount = Mathf.CeilToInt(item.info.Blueprint.scrapFromRecycle * recycleAmount);
-                scrapAmount = Mathf.CeilToInt(scrapAmount * scrapOutputMultiplier);
-
-                if (!forEditor && item.info.stackable == 1 && item.hasCondition)
+                if (item.MaxStackable() == 1 && item.hasCondition)
                 {
-                    scrapAmount = Mathf.CeilToInt(scrapAmount * item.conditionNormalized);
+                    scrapAmountDecimal *= item.conditionNormalized;
                 }
 
-                if (scrapAmount >= 1)
+                scrapAmountDecimal *= recycleEfficiency / RecycleEfficiency;
+                var scrapAmountInt = Mathf.FloorToInt(scrapAmountDecimal);
+                var scrapRemainderForThisCycle = scrapAmountDecimal - scrapAmountInt;
+
+                if (scrapRemainderForThisCycle > 0)
                 {
-                    var scrapItem = ItemManager.CreateByItemID(ScrapItemId, scrapAmount);
+                    var scrapRemainderAdapter = new ReflectionAdapter<float>(recycler, ScrapRemainderField);
+                    var recyclerScrapRemainder = scrapRemainderAdapter.Value;
+                    recyclerScrapRemainder += scrapRemainderForThisCycle;
+
+                    var scrapRemainderToOutput = Mathf.FloorToInt(recyclerScrapRemainder);
+                    if (scrapRemainderToOutput > 0)
+                    {
+                        recyclerScrapRemainder -= scrapRemainderToOutput;
+                        scrapAmountInt += scrapRemainderToOutput;
+                    }
+
+                    scrapRemainderAdapter.Value = recyclerScrapRemainder;
+                }
+
+                if (scrapAmountInt >= 1)
+                {
+                    var scrapItem = ItemManager.CreateByItemID(ScrapItemId, scrapAmountInt);
                     recycler.MoveItemToOutput(scrapItem);
                 }
             }
@@ -512,18 +565,15 @@ namespace Oxide.Plugins
                 if (ingredient.itemDef.itemid == ScrapItemId)
                     continue;
 
-                var ingredientAmount = ingredient.amount
-                    * recycleEfficiency
-                    / item.info.Blueprint.amountToCreate;
-
+                var ingredientAmount = ingredient.amount / item.info.Blueprint.amountToCreate;
                 if (ingredientAmount <= 0)
                     continue;
 
                 var outputAmount = CalculateOutputAmount(
                     recycleAmount,
                     ingredientAmount,
-                    config.OutputMultipliers.GetOutputMultiplier(ingredient.itemid),
-                    forEditor
+                    recycleEfficiency,
+                    config.OutputMultipliers.GetOutputMultiplier(ingredient.itemid)
                 );
 
                 if (outputAmount <= 0)
@@ -587,14 +637,14 @@ namespace Oxide.Plugins
             return item;
         }
 
-        private static int CalculateOutputAmountVanillaRandom(int recycleAmount, float ingredientChance)
+        private static int CalculateOutputAmountVanillaRandom(int recycleAmount, float adjustedIngredientChance)
         {
             var outputAmount = 0;
 
             // Roll a random number for every item to consume.
             for (var i = 0; i < recycleAmount; i++)
             {
-                if (UnityEngine.Random.Range(0f, 1f) <= ingredientChance)
+                if (UnityEngine.Random.Range(0f, 1f) <= adjustedIngredientChance)
                 {
                     outputAmount++;
                 }
@@ -606,35 +656,41 @@ namespace Oxide.Plugins
         private static int CalculateOutputAmountFast(int recycleAmount, float ingredientAmount)
         {
             // To save on performance, don't generate hundreds/thousands/millions of random numbers.
-            var fractionalOutputAmount = ingredientAmount * recycleAmount;
+            var outputAmountDecimal = ingredientAmount * recycleAmount;
 
-            var integerOutputAmount = (int)fractionalOutputAmount;
+            var outputAmountInt = (int)outputAmountDecimal;
 
             // Roll a random number to see if the the remainder should be given.
-            var remainderFractionalOutputAmount = fractionalOutputAmount - integerOutputAmount;
+            var remainderFractionalOutputAmount = outputAmountDecimal - outputAmountInt;
             if (remainderFractionalOutputAmount > 0 && UnityEngine.Random.Range(0f, 1f) <= remainderFractionalOutputAmount)
             {
-                integerOutputAmount++;
+                outputAmountInt++;
             }
 
-            return integerOutputAmount;
+            return outputAmountInt;
         }
 
-        private static int CalculateOutputAmount(int recycleAmount, float ingredientAmount, float outputMultiplier = 1, bool forEditor = false)
+        private static int CalculateOutputAmountRandom(int recycleAmount, float ingredientAmount, float recycleEfficiency, float outputMultiplier)
         {
-            // Adjust using vanilla rounding behavior before applying multipliers, to match user expectations.
-            var adjustedIngredientAmount = ingredientAmount > 1
-                ? Mathf.Ceil(ingredientAmount)
-                : ingredientAmount;
+            var adjustedIngredientAmount = ingredientAmount * outputMultiplier;
+            if (adjustedIngredientAmount <= 1 && recycleAmount <= 100)
+                return CalculateOutputAmountVanillaRandom(recycleAmount, adjustedIngredientAmount * recycleEfficiency);
 
-            adjustedIngredientAmount *= outputMultiplier;
+            return CalculateOutputAmountFast(recycleAmount, adjustedIngredientAmount * recycleEfficiency);
+        }
 
-            // Use more optimized RNG for stacks larger than 100, because players probably don't care at that point.
-            var outputAmount = adjustedIngredientAmount < 1 && recycleAmount <= 100
-                ? CalculateOutputAmountVanillaRandom(recycleAmount, adjustedIngredientAmount)
-                : CalculateOutputAmountFast(recycleAmount, adjustedIngredientAmount);
+        private static int CalculateOutputAmountNoRandom(int recycleAmount, float ingredientAmount, float recycleEfficiency, float outputMultiplier)
+        {
+            var adjustedIngredientAmount = Mathf.CeilToInt(ingredientAmount * recycleEfficiency) * outputMultiplier;
+            return CalculateOutputAmountFast(recycleAmount, adjustedIngredientAmount);
+        }
 
-            return forEditor ? Math.Max(1, outputAmount) : outputAmount;
+        private static int CalculateOutputAmount(int recycleAmount, float ingredientAmount, float recycleEfficiency, float outputMultiplier = 1)
+        {
+            if (ingredientAmount <= 1)
+                return CalculateOutputAmountRandom(recycleAmount, ingredientAmount, recycleEfficiency, outputMultiplier);
+
+            return CalculateOutputAmountNoRandom(recycleAmount, ingredientAmount, recycleEfficiency, outputMultiplier);
         }
 
         private static bool AddItemToRecyclerOutput(Recycler recycler, ItemDefinition itemDefinition, int ingredientAmount, ulong skinId = 0, string displayName = null)
@@ -3439,7 +3495,7 @@ namespace Oxide.Plugins
                 AssertItemAmount(pipe2, 0);
             }
 
-            [TestMethod("Given gears max stack size 100, stack of 3 gears, with no override configured, should output 30 scrap and 39 metal fragments")]
+            [TestMethod("Given gears max stack size 100, stack of 3 gears, with no override configured, should output 36 scrap and 48 metal fragments")]
             public IEnumerator Test_RecycleStacks_NoOverride(List<Action> cleanupActions)
             {
                 InitializePlugin(new Configuration
@@ -3460,11 +3516,11 @@ namespace Oxide.Plugins
                 yield return null;
                 yield return new WaitForSeconds(0.11f);
                 AssertItemAmount(gears, 0);
-                AssertItemInContainer(_recycler.inventory, 6, "scrap", 30);
-                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 39);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 36);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 48);
             }
 
-            [TestMethod("Given gears max stack size 100, stack of 75 gears, default stack percent 50%, should output 500 scrap & 975 metal fragments, then should output 750 scrap & 975 metal fragments")]
+            [TestMethod("Given gears max stack size 100, stack of 75 gears, default stack percent 50%, should output 600 scrap & 975 metal fragments, then should output 900 scrap & 1200 metal fragments")]
             public IEnumerator Test_RecycleStacks_DefaultPercent(List<Action> cleanupActions)
             {
                 InitializePlugin(new Configuration
@@ -3489,16 +3545,16 @@ namespace Oxide.Plugins
                 yield return null;
                 yield return new WaitForSeconds(0.11f);
                 AssertItemAmount(gears, 25);
-                AssertItemInContainer(_recycler.inventory, 6, "scrap", 500);
-                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 650);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 600);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 800);
 
                 yield return new WaitForSeconds(0.1f);
                 AssertItemAmount(gears, 0);
-                AssertItemInContainer(_recycler.inventory, 6, "scrap", 750);
-                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 975);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 900);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 1200);
             }
 
-            [TestMethod("Given gears max stack size 100, stack of 75 gears, gears stack percent 50%, should output 500 scrap & 975 metal fragments, then should output 750 scrap & 975 metal fragments")]
+            [TestMethod("Given gears max stack size 100, stack of 75 gears, gears stack percent 50%, should output 600 scrap & 975 metal fragments, then should output 900 scrap & 1200 metal fragments")]
             public IEnumerator Test_RecycleStacks_ShortNamePercent(List<Action> cleanupActions)
             {
                 InitializePlugin(new Configuration
@@ -3527,16 +3583,16 @@ namespace Oxide.Plugins
                 yield return null;
                 yield return new WaitForSeconds(0.11f);
                 AssertItemAmount(gears, 25);
-                AssertItemInContainer(_recycler.inventory, 6, "scrap", 500);
-                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 650);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 600);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 800);
 
                 yield return new WaitForSeconds(0.1f);
                 AssertItemAmount(gears, 0);
-                AssertItemInContainer(_recycler.inventory, 6, "scrap", 750);
-                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 975);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 900);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 1200);
             }
 
-            [TestMethod("Given 2.0 default multiplier, 3.0 scrap output multiplier, stack of 3 gears, should output 90 scrap & 78 metal fragments")]
+            [TestMethod("Given 2.0 default multiplier, 3.0 scrap output multiplier, stack of 3 gears, should output 108 scrap & 96 metal fragments")]
             public IEnumerator Test_OutputMultipliers(List<Action> cleanupActions)
             {
                 InitializePlugin(new Configuration
@@ -3565,8 +3621,8 @@ namespace Oxide.Plugins
                 yield return null;
                 yield return new WaitForSeconds(0.11f);
                 AssertItemAmount(gears, 0);
-                AssertItemInContainer(_recycler.inventory, 6, "scrap", 90);
-                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 78);
+                AssertItemInContainer(_recycler.inventory, 6, "scrap", 108);
+                AssertItemInContainer(_recycler.inventory, 7, "metal.fragments", 96);
             }
 
             [TestMethod("Given override for gears, stack of 3 gears, should output custom items")]
